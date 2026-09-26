@@ -3,11 +3,39 @@ import requests
 import math
 import random
 import re
+import os
+import threading
+import http.server
+import socketserver
 from datetime import datetime
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from telegram.error import BadRequest
+
+# ==========================================
+# SERVER WEB FITTIZIO PER SODDISFARE RENDER (GRATIS)
+# ==========================================
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"Bot is alive and running!")
+        def log_message(self, format, *args):
+            return # Disattiva i log HTTP superflui per pulire la console
+            
+    try:
+        with socketserver.TCPServer(("", port), HealthCheckHandler) as httpd:
+            print(f"🌐 Server web fittizio avviato sulla porta {port} (Render felice!)")
+            httpd.serve_forever()
+    except Exception as e:
+        print(f"Errore server web fittizio: {e}")
+
+# Avvia il server web in un thread separato così non blocca il bot Telegram
+threading.Thread(target=run_dummy_server, daemon=True).start()
 
 # ==========================================
 # CONFIGURAZIONE BOT TELEGRAM & API
@@ -673,7 +701,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🤖 Bot avviato correttamente...")
+    print("🤖 Bot Telegram avviato correttamente in polling...")
     app.run_polling()
 
 if __name__ == "__main__":
