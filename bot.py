@@ -7,6 +7,7 @@ from datetime import datetime
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.error import BadRequest
 
 # ==========================================
 # CONFIGURAZIONE BOT TELEGRAM & API
@@ -30,9 +31,6 @@ TEAM_CORNER_STATS = {
     "real madrid": (6.9, 3.0, 5.9, 3.7), "barcelona": (6.6, 3.2, 5.8, 3.9), "bayern munich": (7.4, 2.9, 6.5, 3.4)
 }
 
-# ==========================================
-# MAPPATURA E PULIZIA CAMPIONATI
-# ==========================================
 SPORT_KEY_MAP = {
     "soccer_usa_mls": "🇺🇸 USA - MLS",
     "soccer_italy_serie_a": "🇮🇹 Italia - Serie A",
@@ -89,9 +87,6 @@ def clean_league_name(raw_name, sport_key=""):
         return cleaned.title()
     return ""
 
-# ==========================================
-# MOTORE STATISTICO POISSON
-# ==========================================
 def poisson_probability(k, exp_lambda):
     return ((exp_lambda ** k) * math.exp(-exp_lambda)) / math.factorial(k)
 
@@ -194,9 +189,6 @@ def analyze_any_match_corners(home_team, away_team, campionato, difficulty):
         "analysis": analysis_text
     }
 
-# ==========================================
-# DATABASE SQLITE
-# ==========================================
 def init_db():
     conn = sqlite3.connect("value_bets.db")
     cursor = conn.cursor()
@@ -290,16 +282,13 @@ def update_bet_result(bet_id, user_id, esito):
         conn.commit()
     conn.close()
 
-# ==========================================
-# RECUPERO PARTITE REALI
-# ==========================================
 def get_today_soccer_matches():
     tz_it = pytz.timezone("Europe/Rome")
     today_str = datetime.now(tz_it).strftime("%Y%m%d")
     matches = []
     try:
         url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?dates={today_str}"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=8)
         if response.status_code == 200:
             events = response.json().get("events", [])
@@ -374,9 +363,16 @@ def get_today_soccer_matches():
 
     return matches
 
-# ==========================================
-# HANDLER TELEGRAM
-# ==========================================
+async def safe_edit_message(query, text, reply_markup=None, parse_mode="Markdown"):
+    """Funzione di sicurezza per evitare blocchi se il messaggio è identico"""
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            await query.answer("Aggiornato!")
+        else:
+            raise e
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     cap_init, cap_att = get_user_bankroll(user_id)
@@ -396,7 +392,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(welcome_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     else:
-        await update.callback_query.edit_message_text(welcome_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await safe_edit_message(update.callback_query, welcome_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -425,7 +421,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Estrai un altro Match", callback_data="select_match")],
             [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
         ]
-        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data.startswith("diff_"):
         difficulty = query.data.split("_")[1]
@@ -458,7 +454,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Scegli un altro Rischio", callback_data="select_match")],
             [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
         ]
-        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == "confirm_play_bet":
         pending_bet = context.user_data.get("pending_bet_to_save")
@@ -488,7 +484,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🚩 Nuova Analisi", callback_data="select_match")],
             [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
         ]
-        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == "cancel_play_bet":
         context.user_data["pending_bet_to_save"] = None
@@ -497,7 +493,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🚩 Nuova Analisi", callback_data="select_match")],
             [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
         ]
-        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == "manage_bankroll":
         user_id = query.from_user.id
@@ -521,7 +517,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔴 Azzera Statistiche & Storico", callback_data="confirm_reset")],
             [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
         ]
-        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == "view_bets":
         conn = sqlite3.connect("value_bets.db")
@@ -549,7 +545,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = "ℹ️ Nessuna giocata salvata nello storico."
 
         keyboard.append([InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")])
-        await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == "manage_pending_bets":
         conn = sqlite3.connect("value_bets.db")
@@ -560,7 +556,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not rows:
             keyboard = [[InlineKeyboardButton("🔙 Torna alle Bet", callback_data="view_bets")]]
-            await query.edit_message_text("ℹ️ Non hai giocate in attesa di esito da aggiornare.", reply_markup=InlineKeyboardMarkup(keyboard))
+            await safe_edit_message(query, "ℹ️ Non hai giocate in attesa di esito da aggiornare.", reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
         keyboard = []
@@ -574,7 +570,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
 
         keyboard.append([InlineKeyboardButton("🔙 Torna allo Storico", callback_data="view_bets")])
-        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data.startswith("res_"):
         parts = query.data.split("_")
@@ -593,12 +589,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("✅ Sì, Azzera Tutto", callback_data="do_reset")],
             [InlineKeyboardButton("❌ Annulla", callback_data="manage_bankroll")]
         ]
-        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == "do_reset":
         reset_user_stats(query.from_user.id)
         msg = "🧹 **Statistiche e storico scommesse azzerati con successo!**"
-        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]]), parse_mode="Markdown")
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]]))
 
     elif query.data == "set_cassa":
         context.user_data["awaiting_bankroll"] = True
@@ -607,9 +603,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "main_menu":
         await start(update, context)
 
-# ==========================================
-# GESTIONE MESSAGGI DI TESTO
-# ==========================================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text.strip().replace(",", ".")
@@ -691,9 +684,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await update.message.reply_text("❌ Inserisci una quota valida (es. `1.85`).")
 
-# ==========================================
-# MAIN
-# ==========================================
 async def post_init(application: Application):
     await application.bot.set_my_commands([BotCommand("start", "Apri Menu Principale")])
 
@@ -703,7 +693,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🤖 Bot avviato senza diciture generiche...")
+    print("🤖 Bot avviato correttamente...")
     app.run_polling()
 
 if __name__ == "__main__":
