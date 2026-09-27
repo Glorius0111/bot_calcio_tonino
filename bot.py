@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError, Conflict
 
 # ==========================================
 # SERVER WEB FITTIZIO PER RENDER (GRATIS)
@@ -360,7 +360,6 @@ def scan_api_fixtures(target_date_str="Oggi", league_type="top", target_diff="al
     except Exception as e:
         print(f"❌ Errore durante la richiesta API: {e}")
 
-    # ORDINAMENTO RIGOROSO PER PROBABILITÀ (Dalla più alta alla più bassa)
     all_found_bets.sort(key=lambda x: x["probabilita"], reverse=True)
     return all_found_bets[:40]
 
@@ -711,8 +710,13 @@ def main():
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🤖 Bot Telegram avviato con successo (100% API Reali)...")
-    application.run_polling()
+    print("🤖 Bot Telegram avviato con successo...")
+    
+    # Gestione del loop per evitare blocchi improvvisi di rete
+    try:
+        application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    except (NetworkError, Conflict) as e:
+        print(f"⚠️ Errore di connessione Telegram: {e}")
 
 if __name__ == "__main__":
     main()
