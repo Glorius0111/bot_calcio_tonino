@@ -101,7 +101,7 @@ def get_difficulty_from_probability(prob):
     else:
         return "hard", "🔴 DIFFICILE"
 
-def analyze_match_comprehensive(home_team, away_team, campionato, market_category="principali"):
+def analyze_match_comprehensive(home_team, away_team, campionato, target_diff="all"):
     camp_key = campionato.lower().strip() if campionato else "default"
     league_mean = 2.70
     for key, avg in LEAGUE_GOALS_DATABASE.items():
@@ -143,30 +143,35 @@ def analyze_match_comprehensive(home_team, away_team, campionato, market_categor
         p_over = sum(matrix[i][j] for i in range(max_goals+1) for j in range(max_goals+1) if (i + j) > line)
         ou_probs[line] = (p_over, 1.0 - p_over)
 
-    candidates = []
-    if market_category == "principali":
-        candidates = [
-            {"cat": "🏆 Risultato Finale (1X2)", "instruction": f"1 ({home_team} Vincente)", "pick": f"1 ({home_team} Vincente)", "prob": prob_home_win, "kelly": 4.0},
-            {"cat": "🏆 Risultato Finale (1X2)", "instruction": "X (Pareggio)", "pick": "X (Pareggio)", "prob": prob_draw, "kelly": 8.0},
-            {"cat": "🏆 Risultato Finale (1X2)", "instruction": f"2 ({away_team} Vincente)", "pick": f"2 ({away_team} Vincente)", "prob": prob_away_win, "kelly": 4.0},
-            {"cat": "🛡️ Doppia Chance", "instruction": f"1X ({home_team} o Pareggio)", "pick": f"1X ({home_team} o Pareggio)", "prob": prob_dc_1x, "kelly": 2.0},
-            {"cat": "🛡️ Doppia Chance", "instruction": f"X2 (Pareggio o {away_team})", "pick": f"X2 (Pareggio o {away_team})", "prob": prob_dc_x2, "kelly": 2.0},
-        ]
-    elif market_category == "secondarie":
-        candidates = [
-            {"cat": "⚽ Under/Over 1.5 Goal", "instruction": "Over 1.5 Goal", "pick": "Over 1.5 Goal", "prob": ou_probs[1.5][0], "kelly": 2.0},
-            {"cat": "⚽ Under/Over 1.5 Goal", "instruction": "Under 1.5 Goal", "pick": "Under 1.5 Goal", "prob": ou_probs[1.5][1], "kelly": 4.0},
-            {"cat": "⚽ Under/Over 2.5 Goal", "instruction": "Over 2.5 Goal", "pick": "Over 2.5 Goal", "prob": ou_probs[2.5][0], "kelly": 2.0},
-            {"cat": "⚽ Under/Over 2.5 Goal", "instruction": "Under 2.5 Goal", "pick": "Under 2.5 Goal", "prob": ou_probs[2.5][1], "kelly": 4.0},
-            {"cat": "⚽ Under/Over 3.5 Goal", "instruction": "Over 3.5 Goal", "pick": "Over 3.5 Goal", "prob": ou_probs[3.5][0], "kelly": 4.0},
-            {"cat": "⚽ Under/Over 3.5 Goal", "instruction": "Under 3.5 Goal", "pick": "Under 3.5 Goal", "prob": ou_probs[3.5][1], "kelly": 2.0},
-        ]
+    p_home_zero = sum(matrix[0][j] for j in range(max_goals + 1))
+    p_away_zero = sum(matrix[i][0] for i in range(max_goals + 1))
+    prob_btts_yes = (1.0 - p_home_zero) * (1.0 - p_away_zero)
+
+    # Raccolta automatica di tutti i mercati principali e secondari
+    candidates = [
+        {"cat": "🏆 Risultato Finale (1X2)", "instruction": f"1 ({home_team} Vincente)", "pick": f"1 ({home_team} Vincente)", "prob": prob_home_win, "kelly": 4.0},
+        {"cat": "🏆 Risultato Finale (1X2)", "instruction": "X (Pareggio)", "pick": "X (Pareggio)", "prob": prob_draw, "kelly": 8.0},
+        {"cat": "🏆 Risultato Finale (1X2)", "instruction": f"2 ({away_team} Vincente)", "pick": f"2 ({away_team} Vincente)", "prob": prob_away_win, "kelly": 4.0},
+        {"cat": "🛡️ Doppia Chance", "instruction": f"1X ({home_team} o Pareggio)", "pick": f"1X ({home_team} o Pareggio)", "prob": prob_dc_1x, "kelly": 2.0},
+        {"cat": "🛡️ Doppia Chance", "instruction": f"X2 (Pareggio o {away_team})", "pick": f"X2 (Pareggio o {away_team})", "prob": prob_dc_x2, "kelly": 2.0},
+        {"cat": "⚽ Under/Over 1.5 Goal", "instruction": "Over 1.5 Goal", "pick": "Over 1.5 Goal", "prob": ou_probs[1.5][0], "kelly": 2.0},
+        {"cat": "⚽ Under/Over 1.5 Goal", "instruction": "Under 1.5 Goal", "pick": "Under 1.5 Goal", "prob": ou_probs[1.5][1], "kelly": 4.0},
+        {"cat": "⚽ Under/Over 2.5 Goal", "instruction": "Over 2.5 Goal", "pick": "Over 2.5 Goal", "prob": ou_probs[2.5][0], "kelly": 2.0},
+        {"cat": "⚽ Under/Over 2.5 Goal", "instruction": "Under 2.5 Goal", "pick": "Under 2.5 Goal", "prob": ou_probs[2.5][1], "kelly": 4.0},
+        {"cat": "⚽ Under/Over 3.5 Goal", "instruction": "Over 3.5 Goal", "pick": "Over 3.5 Goal", "prob": ou_probs[3.5][0], "kelly": 4.0},
+        {"cat": "⚽ Under/Over 3.5 Goal", "instruction": "Under 3.5 Goal", "pick": "Under 3.5 Goal", "prob": ou_probs[3.5][1], "kelly": 2.0},
+        {"cat": "🥅 Entrambe a Segno (BTTS)", "instruction": "Gol / BTTS Sì", "pick": "Goal / BTTS Sì", "prob": prob_btts_yes, "kelly": 2.0},
+    ]
 
     valid_match_bets = []
     for cand in candidates:
         prob = max(0.005, min(0.995, cand["prob"]))
         fair_odd = 1.0 / prob
         diff_code, d_label = get_difficulty_from_probability(prob)
+
+        # Filtro per difficoltà (Facile, Media, Difficile, Tutte)
+        if target_diff != "all" and diff_code != target_diff:
+            continue
 
         analysis_text = (
             f"• **Expected Goals (xG):** `{total_exp_goals:.2f}` attesi (`{exp_home_goals:.2f}` - `{exp_away_goals:.2f}`).\n"
@@ -277,7 +282,7 @@ def update_bet_result(bet_id, user_id, esito):
         conn.commit()
     conn.close()
 
-def scan_api_fixtures(target_date_str="Oggi", market_category="principali"):
+def scan_api_fixtures(target_date_str="Oggi", league_type="top", target_diff="all"):
     tz_it = pytz.timezone("Europe/Rome")
     now_it = datetime.now(tz_it)
     
@@ -300,7 +305,18 @@ def scan_api_fixtures(target_date_str="Oggi", market_category="principali"):
             sports = resp.json()
             soccer_sports = [s["key"] for s in sports if s.get("active") and "soccer" in s.get("key", "").lower()]
             
-            for sport_key in soccer_sports[:15]:
+            top_keys = [
+                "soccer_italy_serie_a", "soccer_italy_serie_b",
+                "soccer_epl", "soccer_spain_la_liga", 
+                "soccer_germany_bundesliga", "soccer_france_ligue_one",
+                "soccer_uefa_champions_league", "soccer_usa_mls"
+            ]
+            
+            selected_keys = [k for k in top_keys if k in soccer_sports] if league_type == "top" else soccer_sports[:15]
+            if not selected_keys:
+                selected_keys = soccer_sports[:5]
+
+            for sport_key in selected_keys:
                 odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=uk,eu&markets=h2h"
                 odds_resp = requests.get(odds_url, timeout=5)
                 if odds_resp.status_code != 200:
@@ -326,7 +342,7 @@ def scan_api_fixtures(target_date_str="Oggi", market_category="principali"):
                         continue
 
                     if home and away:
-                        match_candidates = analyze_match_comprehensive(home, away, campionato, market_category)
+                        match_candidates = analyze_match_comprehensive(home, away, campionato, target_diff)
                         for mc in match_candidates:
                             mc["data_ora"] = data_ora_str
                             all_found_bets.append(mc)
@@ -335,7 +351,7 @@ def scan_api_fixtures(target_date_str="Oggi", market_category="principali"):
 
     # ORDINAMENTO RIGOROSO PER PROBABILITÀ (Dalla più alta alla più bassa)
     all_found_bets.sort(key=lambda x: x["probabilita"], reverse=True)
-    return all_found_bets[:35]
+    return all_found_bets[:40]
 
 async def safe_edit_message(query, text, reply_markup=None, parse_mode="Markdown"):
     try:
@@ -358,7 +374,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📊 Le mie Bet Salvate", callback_data="view_bets")]
     ]
     welcome_msg = (
-        "🤖 **AI Value Betting Bot (Poisson & Quota Utente)**\n\n"
+        "🤖 **AI Value Betting Bot (Poisson + Quota Utente)**\n\n"
         f"💵 **Bankroll Attuale:** `{cap_att:.2f}€`\n\n"
         "Seleziona un'opzione per iniziare:"
     )
@@ -379,6 +395,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("📅 Solo Oggi", callback_data="date_Oggi")],
             [InlineKeyboardButton("📅 Solo Domani", callback_data="date_Domani")],
+            [InlineKeyboardButton("🌍 Tutte le date", callback_data="date_ALL")],
             [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
         ]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -387,30 +404,49 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chosen_date = query.data.split("_")[1]
         context.user_data["chosen_date"] = chosen_date
 
-        msg = f"🏆 **DATA SELEZIONATA:** `{chosen_date}`\n\nScegli il tipo di mercato da analizzare:"
+        msg = f"🏆 **DATA SELEZIONATA:** `{chosen_date}`\n\nScegli il livello dei campionati:"
         keyboard = [
-            [InlineKeyboardButton("🏆 Scommesse Principali (1X2, Doppia Chance)", callback_data="market_principali")],
-            [InlineKeyboardButton("⚽ Scommesse Secondarie (Under/Over 1.5, 2.5, 3.5)", callback_data="market_secondarie")],
+            [InlineKeyboardButton("🏆 Solo Top Campionati", callback_data="league_top")],
+            [InlineKeyboardButton("🌍 Tutti i Campionati della Giornata", callback_data="league_all")],
             [InlineKeyboardButton("🔙 Indietro", callback_data="select_date")]
         ]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif query.data.startswith("market_"):
-        market_category = query.data.split("_")[1]
-        context.user_data["market_category"] = market_category
+    elif query.data.startswith("league_"):
+        league_type = query.data.split("_")[1]
+        context.user_data["league_type"] = league_type
+
+        msg = "🎚️ **SELEZIONA IL LIVELLO DI PROBABILITÀ:**"
+        keyboard = [
+            [InlineKeyboardButton("🟢 Facile (Probabilità >= 60%)", callback_data="diff_easy")],
+            [InlineKeyboardButton("🟡 Media (Probabilità 38% - 59%)", callback_data="diff_medium")],
+            [InlineKeyboardButton("🔴 Difficile (Probabilità < 38%)", callback_data="diff_hard")],
+            [InlineKeyboardButton("🌟 Tutte le Probabilità", callback_data="diff_all")],
+            [InlineKeyboardButton("🔙 Indietro", callback_data="date_" + context.user_data.get("chosen_date", "Oggi"))]
+        ]
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data.startswith("diff_"):
+        target_diff = query.data.split("_")[1]
+        context.user_data["target_diff"] = target_diff
+        
         chosen_date = context.user_data.get("chosen_date", "Oggi")
+        league_type = context.user_data.get("league_type", "top")
 
-        await safe_edit_message(query, f"🔍 **Scansione partite reali in corso per `{chosen_date}`... Attendere.**")
+        diff_names = {"easy": "Facile", "medium": "Media", "hard": "Difficile", "all": "Tutte"}
+        diff_label = diff_names.get(target_diff, "Tutte")
 
-        value_bets = scan_api_fixtures(chosen_date, market_category)
+        await safe_edit_message(query, f"🔍 **Scansione partite in corso (`{chosen_date}` | `{diff_label}`). Attendere...**")
+
+        value_bets = scan_api_fixtures(chosen_date, league_type, target_diff)
         context.user_data["cached_value_bets"] = value_bets
 
         if not value_bets:
-            keyboard = [[InlineKeyboardButton("🔙 Cambia Data", callback_data="select_date")]]
-            await safe_edit_message(query, f"❌ Nessuna partita trovata per `{chosen_date}`.", reply_markup=InlineKeyboardMarkup(keyboard))
+            keyboard = [[InlineKeyboardButton("🔙 Cambia Filtri", callback_data="select_date")]]
+            await safe_edit_message(query, f"❌ Nessuna giocata trovata per i criteri selezionati (`{chosen_date}`).", reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
-        msg = f"🎯 **PARTITE ORDINATE PER PROBABILITÀ ({len(value_bets)} opzioni):**\nSeleziona una giocata:"
+        msg = f"🎯 **CLASSIFICATE PER PROBABILITÀ ({len(value_bets)} opzioni):**\nSeleziona una giocata:"
         keyboard = []
         for i, vb in enumerate(value_bets[:12]):
             btn_text = f"{vb['probabilita']}% | {vb['partita']} -> {vb['pick']} (Fair: @{vb['quota_fair']})"
@@ -418,7 +454,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 btn_text = f"{vb['probabilita']}% | {vb['pick']}"
             keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"vb_idx_{i}")])
 
-        keyboard.append([InlineKeyboardButton("🔙 Cambia Data", callback_data="select_date")])
+        keyboard.append([InlineKeyboardButton("🔙 Cambia Filtri", callback_data="select_date")])
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data.startswith("vb_idx_"):
@@ -437,6 +473,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🏆 **Campionato:** `{vb['campionato']}`\n"
             f"🏟 **Match:** `{vb['partita']}`\n"
             f"📅 **Data e Ora:** `{vb['data_ora']}`\n\n"
+            f"🗂 **Mercato:** `{vb['categoria']}`\n"
             f"🎯 **Pronostico:** `{vb['pick']}`\n"
             f"📈 **Probabilità del Modello:** `{vb['probabilita']}%` (`{vb['diff_label']}`)\n"
             f"⚖️ **Quota Fair Matematica:** `{vb['quota_fair']}`\n\n"
@@ -444,7 +481,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✍️ **INSERISCI LA QUOTA REALE:**\n"
             f"Digita in chat la quota offerta dal tuo bookmaker per questa scommessa (es. `1.85` o `2.10`):"
         )
-        keyboard = [[InlineKeyboardButton("🔙 Torna alla Lista", callback_data="market_" + context.user_data.get("market_category", "principali"))]]
+        keyboard = [[InlineKeyboardButton("🔙 Torna alla Lista", callback_data="diff_" + context.user_data.get("target_diff", "all"))]]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == "confirm_save_bet":
@@ -663,7 +700,7 @@ def main():
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🤖 Bot Telegram avviato con successo (Poisson + Quota Utente)...")
+    print("🤖 Bot Telegram avviato con successo...")
     application.run_polling()
 
 if __name__ == "__main__":
