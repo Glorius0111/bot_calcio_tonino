@@ -381,7 +381,6 @@ def scan_bet365_value_bets(target_date_str="Oggi", league_type="top", target_dif
                 selected_keys = soccer_sports[:5]
 
             for sport_key in selected_keys:
-                # Utilizziamo regions=uk,eu per massimizzare la copertura di Bet365
                 odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=uk,eu&bookmakers=bet365&markets=h2h,totals,btts,draw_no_bet"
                 odds_resp = requests.get(odds_url, timeout=5)
                 
@@ -627,18 +626,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyboard = [
             [InlineKeyboardButton("💾 Salva questa Bet nel Bankroll", callback_data="confirm_save_bet")],
-            [InlineKeyboardButton("🔙 Torna alle Value Bets", callback_data="diff_" + vb["diff_code"])],
+            [InlineKeyboardButton("🔙 Torna alla Lista", callback_data="diff_" + vb["diff_code"])],
             [InlineKeyboardButton("🏠 Menu Principale", callback_data="main_menu")]
         ]
-        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == "confirm_save_bet":
+        user_id = query.from_user.id
         vb = context.user_data.get("pending_bet_to_save")
         if not vb:
-            await query.answer("Nessuna bet da salvare trovata.", show_alert=True)
+            await query.answer("Nessuna bet selezionata da salvare.", show_alert=True)
             return
-
-        user_id = query.from_user.id
+        
         save_bet(
             user_id=user_id,
             partita=vb["partita"],
@@ -648,35 +647,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             value_rate=vb["value_rate"],
             stake_euro=vb["stake_euro"]
         )
-        await query.answer("✅ Scommessa salvata con successo nel tuo Bankroll!", show_alert=True)
+        
+        keyboard = [[InlineKeyboardButton("🔙 Torna al Menu Principale", callback_data="main_menu")]]
+        await safe_edit_message(query, f"✅ **Bet salvata con successo nel tuo Bankroll!**\n\nPartita: `{vb['partita']}`\nPronostico: `{vb['pick']}`\nQuota: `@`**`{vb['quota_bet365']}`**\nStake: `{vb['stake_euro']:.2f}€`", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == "manage_bankroll":
         user_id = query.from_user.id
         cap_init, cap_att = get_user_bankroll(user_id)
         msg = (
-            "💰 **GESTIONE BANKROLL & CAPITALE**\n\n"
-            f"• **Capitale Iniziale:** `{cap_init:.2f}€`\n"
-            f"• **Capitale Attuale:** `{cap_att:.2f}€`\n\n"
+            f"💰 **GESTIONE BANKROLL**\n\n"
+            f"• Capitale Iniziale: `{cap_init:.2f}€`\n"
+            f"• Capitale Attuale: `{cap_att:.2f}€`\n\n"
             "Scegli un'opzione:"
         )
         keyboard = [
-            [InlineKeyboardButton("✏️ Imposta nuovo Capitale", callback_data="set_bankroll_prompt")],
-            [InlineKeyboardButton("🔄 Reset Statistiche e Bankroll", callback_data="reset_bankroll_confirm")],
-            [InlineKeyboardButton("🏠 Menu Principale", callback_data="main_menu")]
+            [InlineKeyboardButton("✏️ Imposta Nuovo Capitale Iniziale", callback_data="set_bankroll_prompt")],
+            [InlineKeyboardButton("🔄 Reset Statistiche & Bankroll", callback_data="reset_bankroll_confirm")],
+            [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
         ]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == "set_bankroll_prompt":
         context.user_data["awaiting_bankroll"] = True
-        msg = "✍️ Invia nel chat un messaggio con il nuovo valore numerico del tuo capitale iniziale (es. `200` o `150.50`):"
         keyboard = [[InlineKeyboardButton("🔙 Annulla", callback_data="manage_bankroll")]]
-        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+        await safe_edit_message(query, "✏️ Invia in chat il nuovo valore numerico per il tuo bankroll (es. `200` o `150.50`):", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == "reset_bankroll_confirm":
         user_id = query.from_user.id
         reset_user_stats(user_id)
-        await query.answer("🔄 Bankroll e scommesse resettati!", show_alert=True)
-        await manage_bankroll_view(query, user_id)
+        cap_init, cap_att = get_user_bankroll(user_id)
+        keyboard = [[InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]]
+        await safe_edit_message(query, f"🔄 Statistiche resettate con successo!\nBankroll ripristinato a `{cap_att:.2f}€`.", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == "view_bets":
         user_id = query.from_user.id
@@ -687,80 +688,78 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         if not rows:
-            keyboard = [[InlineKeyboardButton("🏠 Menu Principale", callback_data="main_menu")]]
-            await safe_edit_message(query, "📊 Non hai ancora salvato alcuna scommessa.", reply_markup=InlineKeyboardMarkup(keyboard))
+            keyboard = [[InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]]
+            await safe_edit_message(query, "📊 Non hai ancora salvato alcuna giocata.", reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
-        msg = "📊 **LE TUE ULTIME SCOMMESSE SALVATE:**\n\n"
+        msg = "📊 **ULTIME BET SALVATE:**\n\n"
         keyboard = []
-        for row in rows:
-            b_id, partita, pronostico, quota, stake, esito = row
-            icon = "⏳" if esito == "PENDING" else ("✅" if esito == "WON" else "❌")
-            msg += f"{icon} `{partita}`\n   ↳ {pronostico} (@{quota}) | Puntata: `{stake:.2f}€` | Esito: **{esito}**\n\n"
+        for r in rows:
+            b_id, partita, pronostico, quota, stake, esito = r
+            status_icon = "⏳" if esito == "PENDING" else ("✅" if esito == "WON" else "❌")
+            msg += f"{status_icon} `{partita}` | {pronostico} (@{quota}) - Stake: {stake:.2f}€ [{esito}]\n"
             if esito == "PENDING":
                 keyboard.append([
-                    InlineKeyboardButton(f"✅ Vinta ({partita[:15]})", callback_data=f"bet_win_{b_id}"),
-                    InlineKeyboardButton(f"❌ Persa ({partita[:15]})", callback_data=f"bet_loss_{b_id}")
+                    InlineKeyboardButton(f"✅ Vinta (#{b_id})", callback_data=f"res_win_{b_id}"),
+                    InlineKeyboardButton(f"❌ Persa (#{b_id})", callback_data=f"res_lose_{b_id}")
                 ])
-
-        keyboard.append([InlineKeyboardButton("🏠 Menu Principale", callback_data="main_menu")])
+        keyboard.append([InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")])
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif query.data.startswith("bet_win_") or query.data.startswith("bet_loss_"):
+    elif query.data.startswith("res_win_") or query.data.startswith("res_lose_"):
         parts = query.data.split("_")
         esito = "WON" if parts[1] == "win" else "LOST"
         bet_id = int(parts[2])
         user_id = query.from_user.id
-
         update_bet_result(bet_id, user_id, esito)
-        await query.answer(f"Aggiornato esito a {esito}!", show_alert=True)
+        await query.answer(f"Bet aggiornata come {'VINTA ✅' if esito == 'WON' else 'PERSA ❌'}!")
         
-        # Ricarica la lista scommesse
-        fake_query = type('obj', (object,), {'callback_query': query, 'from_user': query.from_user})
-        # Rimanda alla visualizzazione delle scommesse
-        query.data = "view_bets"
-        await button_handler(update, context)
+        # Ricarica la vista delle scommesse salvate
+        conn = sqlite3.connect("value_bets.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, partita, pronostico, quota, stake_euro, esito FROM saved_bets WHERE user_id = ? ORDER BY id DESC LIMIT 10", (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
 
-async def manage_bankroll_view(query, user_id):
-    cap_init, cap_att = get_user_bankroll(user_id)
-    msg = (
-        "💰 **GESTIONE BANKROLL & CAPITALE**\n\n"
-        f"• **Capitale Iniziale:** `{cap_init:.2f}€`\n"
-        f"• **Capitale Attuale:** `{cap_att:.2f}€`\n\n"
-        "Scegli un'opzione:"
-    )
-    keyboard = [
-        [InlineKeyboardButton("✏️ Imposta nuovo Capitale", callback_data="set_bankroll_prompt")],
-        [InlineKeyboardButton("🔄 Reset Statistiche e Bankroll", callback_data="reset_bankroll_confirm")],
-        [InlineKeyboardButton("🏠 Menu Principale", callback_data="main_menu")]
-    ]
-    await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+        msg = "📊 **ULTIME BET SALVATE:**\n\n"
+        keyboard = []
+        for r in rows:
+            b_id, partita, pronostico, quota, stake, esito_val = r
+            status_icon = "⏳" if esito_val == "PENDING" else ("✅" if esito_val == "WON" else "❌")
+            msg += f"{status_icon} `{partita}` | {pronostico} (@{quota}) - Stake: {stake:.2f}€ [{esito_val}]\n"
+            if esito_val == "PENDING":
+                keyboard.append([
+                    InlineKeyboardButton(f"✅ Vinta (#{b_id})", callback_data=f"res_win_{b_id}"),
+                    InlineKeyboardButton(f"❌ Persa (#{b_id})", callback_data=f"res_lose_{b_id}")
+                ])
+        keyboard.append([InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")])
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if context.user_data.get("awaiting_bankroll"):
-        text = update.message.text.strip().replace(",", ".")
         try:
-            nuovo_capitale = float(text)
-            if nuovo_capitale <= 0:
+            text_val = update.message.text.strip().replace(",", ".")
+            new_cap = float(text_val)
+            if new_cap <= 0:
                 raise ValueError()
-            set_user_bankroll(user_id, nuovo_capitale)
+            set_user_bankroll(user_id, new_cap)
             context.user_data["awaiting_bankroll"] = False
-            await update.message.reply_text(f"✅ Capitale aggiornato con successo a `{nuovo_capitale:.2f}€`!", parse_mode="Markdown")
+            await update.message.reply_text(f"✅ Bankroll aggiornato con successo a `{new_cap:.2f}€`!", parse_mode="Markdown")
             await start(update, context)
         except ValueError:
-            await update.message.reply_text("❌ Valore non valido. Inserisci un numero maggiore di zero (es. `150`):", parse_mode="Markdown")
+            await update.message.reply_text("❌ Valore non valido. Inserisci un numero positivo (es. `150` o `100.50`):", parse_mode="Markdown")
 
 def main():
     init_db()
-    application = Application.builder().token(TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
-
-    print("🤖 Bot avviato correttamente e in ascolto...")
-    application.run_polling()
+    app = Application.builder().token(TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    print("🤖 Bot Telegram avviato con successo!")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
