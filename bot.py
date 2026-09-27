@@ -344,7 +344,7 @@ def get_filtered_soccer_matches(target_date_str="Oggi", league_type="top"):
                     if not selected_keys:
                         selected_keys = soccer_sports[:5]
                 else:
-                    selected_keys = soccer_sports[:12]
+                    selected_keys = soccer_sports[:15]
                 
                 for sport_key in selected_keys:
                     events_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/events?apiKey={ODDS_API_KEY}"
@@ -371,24 +371,19 @@ def get_filtered_soccer_matches(target_date_str="Oggi", league_type="top"):
                             if filter_date != "ALL" and match_date_str != filter_date:
                                 continue
 
-                            if home and away:
-                                matches.append({
-                                    "home": home,
-                                    "away": away,
-                                    "campionato": campionato,
-                                    "data_ora": data_ora_str,
-                                    "match_date": match_date_str
-                                })
+                            match_obj = {
+                                "home": home,
+                                "away": away,
+                                "campionato": campionato,
+                                "data_ora": data_ora_str,
+                                "match_date": match_date_str
+                            }
+                            if home and away and match_obj not in matches:
+                                matches.append(match_obj)
         except Exception as e:
             print(f"Errore The Odds API events: {e}")
 
-    if not matches:
-        matches = [
-            {"home": "Inter", "away": "Milan", "campionato": "🇮🇹 Italia - Serie A", "data_ora": f"{today_str} alle 20:45", "match_date": today_str},
-            {"home": "Arsenal", "away": "Chelsea", "campionato": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Inghilterra - Premier League", "data_ora": f"{today_str} alle 17:30", "match_date": today_str},
-            {"home": "Real Madrid", "away": "Barcelona", "campionato": "🇪🇸 Spagna - La Liga", "data_ora": f"{tomorrow_str} alle 21:00", "match_date": tomorrow_str}
-        ]
-
+    # RESTITUISCE ESCLUSIVAMENTE MATCH REALI (NESSUN FALLBACK FITTIZIO)
     return matches
 
 async def safe_edit_message(query, text, reply_markup=None, parse_mode="Markdown"):
@@ -457,12 +452,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not matches:
             keyboard = [[InlineKeyboardButton("🔙 Cambia Filtri", callback_data="select_date")]]
-            await safe_edit_message(query, "❌ Nessuna partita trovata con i filtri selezionati.", reply_markup=InlineKeyboardMarkup(keyboard))
+            await safe_edit_message(query, f"❌ Nessuna partita reale trovata per la data `{chosen_date}` con i filtri selezionati.", reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
-        msg = f"⚽ **PARTITE TROVATE ({len(matches)} match):**\nScegli un match dalla lista o estrai a caso:"
+        msg = f"⚽ **PARTITE REALI TROVATE ({len(matches)} match):**\nScegli un match dalla lista o estrai a caso:"
         keyboard = []
-        for i, m in enumerate(matches[:7]): # Mostra fino a 7 partite come bottoni
+        for i, m in enumerate(matches[:15]): # Mostra fino a 15 partite reali
             btn_text = f"{m['campionato']} | {m['home']} vs {m['away']}"
             if len(btn_text) > 60:
                 btn_text = f"{m['home']} vs {m['away']}"
@@ -476,6 +471,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         matches = context.user_data.get("cached_matches", [])
         if not matches:
             matches = get_filtered_soccer_matches("Oggi", "top")
+
+        if not matches:
+            keyboard = [[InlineKeyboardButton("🔙 Cambia Filtri", callback_data="select_date")]]
+            await safe_edit_message(query, "❌ Nessuna partita disponibile in memoria. Riprova.", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
 
         if query.data == "match_random_filtered":
             match = random.choice(matches)
@@ -775,7 +775,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🤖 Bot Telegram avviato correttamente con filtri per data e campionati...")
+    print("🤖 Bot Telegram avviato correttamente senza match di fallback (solo dati reali)...")
     app.run_polling()
 
 if __name__ == "__main__":
