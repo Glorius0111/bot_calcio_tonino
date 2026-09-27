@@ -132,7 +132,6 @@ def resolve_team_goals_metrics(team_name, is_home, league_avg_goals):
     return for_stat, against_stat
 
 def get_difficulty_from_probability(prob):
-    # Classificazione basata unicamente sulla percentuale di probabilità
     if prob >= 0.60:
         return "easy", "🟢 FACILE"
     elif prob >= 0.38:
@@ -193,7 +192,6 @@ def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_di
     prob_btts_no = 1.0 - prob_btts_yes
 
     candidates = [
-        # --- Segno 1X2 & Doppia Chance ---
         {"cat": "🏆 Risultato Finale (1X2)", "instruction": f"Seleziona **1** (Vittoria {home_team})", "pick": f"1 ({home_team} Vincente)", "type": "1x2_1", "prob": prob_home_win, "kelly": 4.0},
         {"cat": "🏆 Risultato Finale (1X2)", "instruction": "Seleziona **X** (Pareggio)", "pick": "X (Pareggio)", "type": "1x2_X", "prob": prob_draw, "kelly": 8.0},
         {"cat": "🏆 Risultato Finale (1X2)", "instruction": f"Seleziona **2** (Vittoria {away_team})", "pick": f"2 ({away_team} Vincente)", "type": "1x2_2", "prob": prob_away_win, "kelly": 4.0},
@@ -202,11 +200,9 @@ def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_di
         {"cat": "🛡️ Doppia Chance", "instruction": f"Seleziona **X2** (Pareggio o {away_team})", "pick": f"X2 (Pareggio o {away_team})", "type": "dc_x2", "prob": prob_dc_x2, "kelly": 2.0},
         {"cat": "🛡️ Doppia Chance", "instruction": f"Seleziona **12** ({home_team} o {away_team} - No Pareggio)", "pick": f"12 ({home_team} o {away_team})", "type": "dc_12", "prob": prob_dc_12, "kelly": 3.0},
 
-        # --- Draw No Bet (Rimborso in caso di parità) ---
         {"cat": "🔄 Draw No Bet (Rimborso se X)", "instruction": f"Seleziona **1 DNB** (Rimborso se pareggia {home_team})", "pick": f"1 DNB ({home_team})", "type": "dnb_1", "prob": prob_dnb_1, "kelly": 3.0},
         {"cat": "🔄 Draw No Bet (Rimborso se X)", "instruction": f"Seleziona **2 DNB** (Rimborso se pareggia {away_team})", "pick": f"2 DNB ({away_team})", "type": "dnb_2", "prob": prob_dnb_2, "kelly": 3.0},
 
-        # --- Under / Over Totali ---
         {"cat": "⚽ Under/Over 0.5 Goal", "instruction": "Seleziona **Over 0.5** (Almeno 1 gol nel match)", "pick": "Over 0.5 Goal", "type": "over_05", "prob": ou_probs[0.5][0], "kelly": 1.5},
         {"cat": "⚽ Under/Over 0.5 Goal", "instruction": "Seleziona **Under 0.5** (0-0 fisso)", "pick": "Under 0.5 Goal", "type": "under_05", "prob": ou_probs[0.5][1], "kelly": 8.0},
         
@@ -222,7 +218,6 @@ def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_di
         {"cat": "⚽ Under/Over 4.5 Goal", "instruction": "Seleziona **Over 4.5** (Almeno 5 gol nel match)", "pick": "Over 4.5 Goal", "type": "over_45", "prob": ou_probs[4.5][0], "kelly": 8.0},
         {"cat": "⚽ Under/Over 4.5 Goal", "instruction": "Seleziona **Under 4.5** (Meno di 5 gol nel match)", "pick": "Under 4.5 Goal", "type": "under_45", "prob": ou_probs[4.5][1], "kelly": 1.5},
 
-        # --- Entrambe a Segno (BTTS) ---
         {"cat": "🥅 Entrambe a Segno (BTTS)", "instruction": "Seleziona **Gol / Sì** (Entrambe segnano almeno un gol)", "pick": "Goal / BTTS Sì", "type": "btts_yes", "prob": prob_btts_yes, "kelly": 2.0},
         {"cat": "🥅 Entrambe a Segno (BTTS)", "instruction": "Seleziona **No Gol / No** (Almeno una squadra non segna)", "pick": "No Goal / BTTS No", "type": "btts_no", "prob": prob_btts_no, "kelly": 4.0}
     ]
@@ -232,7 +227,7 @@ def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_di
     for cand in candidates:
         b365_odd = bet365_odds_dict.get(cand["type"])
         if not b365_odd:
-            continue  # Salta se Bet365 non ha questa quota reale disponibile
+            continue
 
         prob = max(0.005, min(0.995, cand["prob"]))
         fair_odd = 1.0 / prob
@@ -367,113 +362,121 @@ def scan_bet365_value_bets(target_date_str="Oggi", league_type="top", target_dif
             sports_url = f"https://api.the-odds-api.com/v4/sports?apiKey={ODDS_API_KEY}"
             resp = requests.get(sports_url, timeout=8)
             
-            if resp.status_code == 200:
-                sports = resp.json()
-                soccer_sports = [s["key"] for s in sports if s.get("active") and "soccer" in s.get("key", "").lower()]
+            if resp.status_code != 200:
+                print(f"❌ Errore caricamento sport (Status {resp.status_code}): {resp.text}")
+                return []
+
+            sports = resp.json()
+            soccer_sports = [s["key"] for s in sports if s.get("active") and "soccer" in s.get("key", "").lower()]
+            
+            top_keys = [
+                "soccer_italy_serie_a", "soccer_italy_serie_b",
+                "soccer_epl", "soccer_spain_la_liga", 
+                "soccer_germany_bundesliga", "soccer_france_ligue_one",
+                "soccer_uefa_champions_league", "soccer_usa_mls"
+            ]
+            
+            selected_keys = [k for k in top_keys if k in soccer_sports] if league_type == "top" else soccer_sports[:15]
+            if not selected_keys:
+                selected_keys = soccer_sports[:5]
+
+            for sport_key in selected_keys:
+                # Utilizziamo regions=uk,eu per massimizzare la copertura di Bet365
+                odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=uk,eu&bookmakers=bet365&markets=h2h,totals,btts,draw_no_bet"
+                odds_resp = requests.get(odds_url, timeout=5)
                 
-                top_keys = [
-                    "soccer_italy_serie_a", "soccer_italy_serie_b",
-                    "soccer_epl", "soccer_spain_la_liga", 
-                    "soccer_germany_bundesliga", "soccer_france_ligue_one",
-                    "soccer_uefa_champions_league", "soccer_usa_mls"
-                ]
-                
-                selected_keys = [k for k in top_keys if k in soccer_sports] if league_type == "top" else soccer_sports[:15]
-                if not selected_keys:
-                    selected_keys = soccer_sports[:5]
+                if odds_resp.status_code != 200:
+                    print(f"⚠️ API Odds non disponibili per {sport_key} (Status {odds_resp.status_code})")
+                    continue
 
-                for sport_key in selected_keys:
-                    odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=eu&bookmakers=bet365&markets=h2h,totals,btts,draw_no_bet"
-                    odds_resp = requests.get(odds_url, timeout=5)
-                    
-                    if odds_resp.status_code == 200:
-                        events = odds_resp.json()
-                        for ev in events:
-                            home = ev.get("home_team")
-                            away = ev.get("away_team")
-                            sport_title = ev.get("sport_title", "")
-                            campionato = clean_league_name(sport_title, sport_key)
-                            commence_time = ev.get("commence_time")
+                events = odds_resp.json()
+                print(f"📡 Trovati {len(events)} eventi per {sport_key}")
 
-                            if commence_time:
-                                utc_dt = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
-                                local_dt = utc_dt.astimezone(tz_it)
-                                match_date_str = local_dt.strftime("%d/%m/%Y")
-                                data_ora_str = local_dt.strftime("%d/%m/%Y alle %H:%M")
-                            else:
-                                match_date_str = today_str
-                                data_ora_str = "In arrivo"
+                for ev in events:
+                    home = ev.get("home_team")
+                    away = ev.get("away_team")
+                    sport_title = ev.get("sport_title", "")
+                    campionato = clean_league_name(sport_title, sport_key)
+                    commence_time = ev.get("commence_time")
 
-                            if filter_date != "ALL" and match_date_str != filter_date:
-                                continue
+                    if commence_time:
+                        utc_dt = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+                        local_dt = utc_dt.astimezone(tz_it)
+                        match_date_str = local_dt.strftime("%d/%m/%Y")
+                        data_ora_str = local_dt.strftime("%d/%m/%Y alle %H:%M")
+                    else:
+                        match_date_str = today_str
+                        data_ora_str = "In arrivo"
 
-                            b365_dict = {}
-                            for bm in ev.get("bookmakers", []):
-                                if bm.get("key") == "bet365":
-                                    for market in bm.get("markets", []):
-                                        m_key = market.get("key")
-                                        outcomes = market.get("outcomes", [])
-                                        
-                                        if m_key == "h2h":
-                                            for outcome in outcomes:
-                                                name = outcome.get("name")
-                                                price = outcome.get("price")
-                                                if name == home:
-                                                    b365_dict["1x2_1"] = price
-                                                    b365_dict["dc_1x"] = round(price * 1.15, 2)
-                                                    b365_dict["dc_12"] = round(price * 1.10, 2)
-                                                elif name == away:
-                                                    b365_dict["1x2_2"] = price
-                                                    b365_dict["dc_x2"] = round(price * 1.15, 2)
-                                                elif "draw" in name.lower() or "pareggio" in name.lower():
-                                                    b365_dict["1x2_X"] = price
-                                                    
-                                        elif m_key == "draw_no_bet":
-                                            for outcome in outcomes:
-                                                name = outcome.get("name")
-                                                price = outcome.get("price")
-                                                if name == home:
-                                                    b365_dict["dnb_1"] = price
-                                                elif name == away:
-                                                    b365_dict["dnb_2"] = price
+                    if filter_date != "ALL" and match_date_str != filter_date:
+                        continue
 
-                                        elif m_key == "btts":
-                                            for outcome in outcomes:
-                                                name = outcome.get("name", "").lower()
-                                                price = outcome.get("price")
-                                                if "yes" in name or "sì" in name or "si" in name:
-                                                    b365_dict["btts_yes"] = price
-                                                elif "no" in name:
-                                                    b365_dict["btts_no"] = price
+                    b365_dict = {}
+                    for bm in ev.get("bookmakers", []):
+                        if bm.get("key") == "bet365":
+                            for market in bm.get("markets", []):
+                                m_key = market.get("key")
+                                outcomes = market.get("outcomes", [])
+                                
+                                if m_key == "h2h":
+                                    for outcome in outcomes:
+                                        name = outcome.get("name")
+                                        price = outcome.get("price")
+                                        if name == home:
+                                            b365_dict["1x2_1"] = price
+                                            b365_dict["dc_1x"] = round(price * 1.15, 2)
+                                            b365_dict["dc_12"] = round(price * 1.10, 2)
+                                        elif name == away:
+                                            b365_dict["1x2_2"] = price
+                                            b365_dict["dc_x2"] = round(price * 1.15, 2)
+                                        elif "draw" in name.lower() or "pareggio" in name.lower():
+                                            b365_dict["1x2_X"] = price
+                                            
+                                elif m_key == "draw_no_bet":
+                                    for outcome in outcomes:
+                                        name = outcome.get("name")
+                                        price = outcome.get("price")
+                                        if name == home:
+                                            b365_dict["dnb_1"] = price
+                                        elif name == away:
+                                            b365_dict["dnb_2"] = price
 
-                                        elif m_key == "totals":
-                                            for outcome in outcomes:
-                                                name = outcome.get("name", "").lower()
-                                                point = outcome.get("point")
-                                                price = outcome.get("price")
-                                                if point in [0.5, 1.5, 2.5, 3.5, 4.5]:
-                                                    l_str = str(point).replace('.', '')
-                                                    if "over" in name:
-                                                        b365_dict[f"over_{l_str}"] = price
-                                                    elif "under" in name:
-                                                        b365_dict[f"under_{l_str}"] = price
+                                elif m_key == "btts":
+                                    for outcome in outcomes:
+                                        name = outcome.get("name", "").lower()
+                                        price = outcome.get("price")
+                                        if "yes" in name or "sì" in name or "si" in name:
+                                            b365_dict["btts_yes"] = price
+                                        elif "no" in name:
+                                            b365_dict["btts_no"] = price
 
-                            if "1x2_1" in b365_dict and "1x2_X" in b365_dict and "dc_1x" not in b365_dict:
-                                b365_dict["dc_1x"] = round(1 / ((1 / b365_dict["1x2_1"]) + (1 / b365_dict["1x2_X"])), 2)
-                            if "1x2_2" in b365_dict and "1x2_X" in b365_dict and "dc_x2" not in b365_dict:
-                                b365_dict["dc_x2"] = round(1 / ((1 / b365_dict["1x2_2"]) + (1 / b365_dict["1x2_X"])), 2)
-                            if "1x2_1" in b365_dict and "1x2_2" in b365_dict and "dc_12" not in b365_dict:
-                                b365_dict["dc_12"] = round(1 / ((1 / b365_dict["1x2_1"]) + (1 / b365_dict["1x2_2"])), 2)
+                                elif m_key == "totals":
+                                    for outcome in outcomes:
+                                        name = outcome.get("name", "").lower()
+                                        point = outcome.get("point")
+                                        price = outcome.get("price")
+                                        if point in [0.5, 1.5, 2.5, 3.5, 4.5]:
+                                            l_str = str(point).replace('.', '')
+                                            if "over" in name:
+                                                b365_dict[f"over_{l_str}"] = price
+                                            elif "under" in name:
+                                                b365_dict[f"under_{l_str}"] = price
 
-                            if home and away:
-                                match_candidates = analyze_match_comprehensive(home, away, campionato, b365_dict, target_diff)
-                                for mc in match_candidates:
-                                    mc["data_ora"] = data_ora_str
-                                    all_found_bets.append(mc)
+                    if "1x2_1" in b365_dict and "1x2_X" in b365_dict and "dc_1x" not in b365_dict:
+                        b365_dict["dc_1x"] = round(1 / ((1 / b365_dict["1x2_1"]) + (1 / b365_dict["1x2_X"])), 2)
+                    if "1x2_2" in b365_dict and "1x2_X" in b365_dict and "dc_x2" not in b365_dict:
+                        b365_dict["dc_x2"] = round(1 / ((1 / b365_dict["1x2_2"]) + (1 / b365_dict["1x2_X"])), 2)
+                    if "1x2_1" in b365_dict and "1x2_2" in b365_dict and "dc_12" not in b365_dict:
+                        b365_dict["dc_12"] = round(1 / ((1 / b365_dict["1x2_1"]) + (1 / b365_dict["1x2_2"])), 2)
+
+                    if home and away:
+                        match_candidates = analyze_match_comprehensive(home, away, campionato, b365_dict, target_diff)
+                        for mc in match_candidates:
+                            mc["data_ora"] = data_ora_str
+                            all_found_bets.append(mc)
         except Exception as e:
-            print(f"Errore scansione Bet365 API: {e}")
+            print(f"❌ Errore scansione Bet365 API: {e}")
 
-    # Ordina per valore decrescente in modo da mostrare sempre le migliori opportunità
     all_found_bets.sort(key=lambda x: x["value_rate"], reverse=True)
     return all_found_bets[:30]
 
@@ -510,7 +513,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if query.data == "select_date":
+    if query.data == "main_menu":
+        await start(update, context)
+
+    elif query.data == "select_date":
         msg = "📅 **SELEZIONA LA DATA PER LA SCANSIONE:**"
         keyboard = [
             [InlineKeyboardButton("📅 Oggi", callback_data="date_Oggi")],
@@ -609,190 +615,152 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📅 **Data e Ora:** `{vb['data_ora']}`\n\n"
             f"🗂 **Sezione su Bet365:** `{vb['categoria']}`\n"
             f"🎯 **COSA CLICCARE:** `{vb['instruction']}`\n"
-            f"🟢 **Quota Reale Bet365:** `@`**`{vb['quota_bet365']}`**\n\n"
-            f"📊 **Statistiche & Valore:**\n"
-            f"• Probabilità Poisson: `{vb['probabilita']}%` (Quota Fair: `{vb['quota_fair']}`)\n"
-            f"• Vantaggio atteso (EV+): `{vb['value_rate_pct']:+.2f}%`\n\n"
-            f"📋 **Analisi Dettagliata:**\n{vb['analysis']}\n\n"
-            f"💰 **Stake Consigliato:** `{stake_pct:.1f}% cassa` (`{stake_euro:.2f}€`)\n\n"
-            f"❓ **Vuoi registrare questa giocata nella tua cassa?**"
+            f"🟢 **Quota Reale Bet365:** `@`**`{vb['quota_bet365']}`**\n"
+            f"⚖️ **Quota Fair (Modello):** `{vb['quota_fair']}`\n"
+            f"📈 **Value Rate:** `+{vb['value_rate_pct']}%`\n\n"
+            f"💡 **BANKROLL & STAKE CONSIGLIATO:**\n"
+            f"• **Capitale Attuale:** `{cap_att:.2f}€`\n"
+            f"• **Stake Consigliato (Kelly):** `{stake_euro:.2f}€` (`{stake_pct:.1f}%` del bankroll)\n\n"
+            f"📊 **ANALISI STATISTICA (POISSON):**\n"
+            f"{vb['analysis']}"
         )
-        keyboard = [
-            [InlineKeyboardButton("✅ GIOCATA (Salva in Cassa)", callback_data="confirm_play_bet")],
-            [InlineKeyboardButton("❌ NON GIOCATA (Annulla)", callback_data="cancel_play_bet")],
-            [InlineKeyboardButton("🔙 Torna alla Lista", callback_data="diff_" + context.user_data.get("target_diff", "all"))]
-        ]
-        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif query.data == "confirm_play_bet":
-        pending_bet = context.user_data.get("pending_bet_to_save")
-        if not pending_bet:
-            await query.message.reply_text("❌ Nessuna scommessa in attesa di salvataggio.")
+        keyboard = [
+            [InlineKeyboardButton("💾 Salva questa Bet nel Bankroll", callback_data="confirm_save_bet")],
+            [InlineKeyboardButton("🔙 Torna alle Value Bets", callback_data="diff_" + vb["diff_code"])],
+            [InlineKeyboardButton("🏠 Menu Principale", callback_data="main_menu")]
+        ]
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif query.data == "confirm_save_bet":
+        vb = context.user_data.get("pending_bet_to_save")
+        if not vb:
+            await query.answer("Nessuna bet da salvare trovata.", show_alert=True)
             return
 
+        user_id = query.from_user.id
         save_bet(
-            user_id=query.from_user.id,
-            partita=pending_bet["partita"],
-            pronostico=pending_bet["pick"],
-            quota=pending_bet["quota_bet365"],
-            probabilita=pending_bet["probabilita"] / 100.0,
-            value_rate=pending_bet["value_rate"],
-            stake_euro=pending_bet["stake_euro"]
+            user_id=user_id,
+            partita=vb["partita"],
+            pronostico=vb["pick"],
+            quota=vb["quota_bet365"],
+            probabilita=vb["probabilita"],
+            value_rate=vb["value_rate"],
+            stake_euro=vb["stake_euro"]
         )
-        context.user_data["pending_bet_to_save"] = None
-
-        msg = (
-            f"✅ **SCOMMESSA REGISTRATA CON SUCCESSO!**\n\n"
-            f"🏟 **Partita:** `{pending_bet['partita']}`\n"
-            f"🎯 **Pick:** `{pending_bet['pick']}` @`{pending_bet['quota_bet365']}`\n"
-            f"💰 **Puntata:** `{pending_bet['stake_euro']:.2f}€`\n\n"
-            f"💾 _Giocata salvata nello storico cassa._"
-        )
-        keyboard = [
-            [InlineKeyboardButton("🔍 Nuova Scansione", callback_data="select_date")],
-            [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
-        ]
-        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif query.data == "cancel_play_bet":
-        context.user_data["pending_bet_to_save"] = None
-        msg = "❌ **Scommessa NON salvata.**"
-        keyboard = [
-            [InlineKeyboardButton("🔍 Nuova Scansione", callback_data="select_date")],
-            [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
-        ]
-        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.answer("✅ Scommessa salvata con successo nel tuo Bankroll!", show_alert=True)
 
     elif query.data == "manage_bankroll":
         user_id = query.from_user.id
         cap_init, cap_att = get_user_bankroll(user_id)
-        profitto_tot = cap_att - cap_init
-        roi = ((cap_att - cap_init) / cap_init) * 100 if cap_init > 0 else 0
-
         msg = (
-            f"💰 **GESTIONE BANKROLL & CASSA**\n\n"
-            f"💵 **Capitale Iniziale:** `{cap_init:.2f}€`\n"
-            f"📈 **Capitale Attuale:** `{cap_att:.2f}€`\n"
-            f"📊 **Profitto Netto:** `{profitto_tot:+.2f}€`\n"
-            f"🎯 **ROI Complessivo:** `{roi:+.1f}%`"
+            "💰 **GESTIONE BANKROLL & CAPITALE**\n\n"
+            f"• **Capitale Iniziale:** `{cap_init:.2f}€`\n"
+            f"• **Capitale Attuale:** `{cap_att:.2f}€`\n\n"
+            "Scegli un'opzione:"
         )
         keyboard = [
-            [InlineKeyboardButton("⚙️ Imposta Cassa Iniziale", callback_data="set_cassa")],
-            [InlineKeyboardButton("🔴 Azzera Statistiche & Storico", callback_data="confirm_reset")],
-            [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
+            [InlineKeyboardButton("✏️ Imposta nuovo Capitale", callback_data="set_bankroll_prompt")],
+            [InlineKeyboardButton("🔄 Reset Statistiche e Bankroll", callback_data="reset_bankroll_confirm")],
+            [InlineKeyboardButton("🏠 Menu Principale", callback_data="main_menu")]
         ]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif query.data == "view_bets":
-        conn = sqlite3.connect("value_bets.db")
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, partita, pronostico, quota, stake_euro, esito, profitto FROM saved_bets WHERE user_id = ? ORDER BY id DESC LIMIT 10", (query.from_user.id,))
-        rows = cursor.fetchall()
-        conn.close()
-
-        keyboard = []
-        if rows:
-            msg = "📊 **IL TUO STORICO VALUE BETS:**\n\n"
-            for row in rows:
-                bet_id, partita, pronostico, quota, stake, esito, profitto = row
-                if esito == "WON":
-                    status_str = f"🟢 **VINTA (+{profitto:.2f}€)**"
-                elif esito == "LOST":
-                    status_str = f"🔴 **PERSA ({profitto:.2f}€)**"
-                else:
-                    status_str = "⏳ **IN ATTESA**"
-
-                msg += f"🆔 `#{bet_id}` - 🏟 **{partita}**\n• Pick: `{pronostico}` | Quota: `{quota}`\n• Stake: `{stake:.2f}€` | Esito: {status_str}\n\n"
-            keyboard.append([InlineKeyboardButton("✏️ Aggiorna Esito di una Bet", callback_data="manage_pending_bets")])
-            keyboard.append([InlineKeyboardButton("🔴 Azzera Statistiche", callback_data="confirm_reset")])
-        else:
-            msg = "ℹ️ Nessuna giocata salvata nello storico."
-
-        keyboard.append([InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")])
+    elif query.data == "set_bankroll_prompt":
+        context.user_data["awaiting_bankroll"] = True
+        msg = "✍️ Invia nel chat un messaggio con il nuovo valore numerico del tuo capitale iniziale (es. `200` o `150.50`):"
+        keyboard = [[InlineKeyboardButton("🔙 Annulla", callback_data="manage_bankroll")]]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif query.data == "manage_pending_bets":
+    elif query.data == "reset_bankroll_confirm":
+        user_id = query.from_user.id
+        reset_user_stats(user_id)
+        await query.answer("🔄 Bankroll e scommesse resettati!", show_alert=True)
+        await manage_bankroll_view(query, user_id)
+
+    elif query.data == "view_bets":
+        user_id = query.from_user.id
         conn = sqlite3.connect("value_bets.db")
         cursor = conn.cursor()
-        cursor.execute("SELECT id, partita, pronostico, stake_euro FROM saved_bets WHERE user_id = ? AND esito = 'PENDING' ORDER BY id DESC", (query.from_user.id,))
+        cursor.execute("SELECT id, partita, pronostico, quota, stake_euro, esito FROM saved_bets WHERE user_id = ? ORDER BY id DESC LIMIT 10", (user_id,))
         rows = cursor.fetchall()
         conn.close()
 
         if not rows:
-            keyboard = [[InlineKeyboardButton("🔙 Torna alle Bet", callback_data="view_bets")]]
-            await safe_edit_message(query, "ℹ️ Non hai giocate in attesa di esito da aggiornare.", reply_markup=InlineKeyboardMarkup(keyboard))
+            keyboard = [[InlineKeyboardButton("🏠 Menu Principale", callback_data="main_menu")]]
+            await safe_edit_message(query, "📊 Non hai ancora salvato alcuna scommessa.", reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
+        msg = "📊 **LE TUE ULTIME SCOMMESSE SALVATE:**\n\n"
         keyboard = []
-        msg = "✏️ **SELEZIONA L'ESITO DELLE GIOCATE IN ATTESA:**\n\n"
         for row in rows:
-            bet_id, partita, pron, stake = row
-            msg += f"🆔 `#{bet_id}` - `{partita}` (`{pron}`) - Puntata: `{stake:.2f}€`\n"
-            keyboard.append([
-                InlineKeyboardButton(f"🟢 Vinta #{bet_id}", callback_data=f"res_WON_{bet_id}"),
-                InlineKeyboardButton(f"🔴 Persa #{bet_id}", callback_data=f"res_LOST_{bet_id}")
-            ])
+            b_id, partita, pronostico, quota, stake, esito = row
+            icon = "⏳" if esito == "PENDING" else ("✅" if esito == "WON" else "❌")
+            msg += f"{icon} `{partita}`\n   ↳ {pronostico} (@{quota}) | Puntata: `{stake:.2f}€` | Esito: **{esito}**\n\n"
+            if esito == "PENDING":
+                keyboard.append([
+                    InlineKeyboardButton(f"✅ Vinta ({partita[:15]})", callback_data=f"bet_win_{b_id}"),
+                    InlineKeyboardButton(f"❌ Persa ({partita[:15]})", callback_data=f"bet_loss_{b_id}")
+                ])
 
-        keyboard.append([InlineKeyboardButton("🔙 Torna allo Storico", callback_data="view_bets")])
+        keyboard.append([InlineKeyboardButton("🏠 Menu Principale", callback_data="main_menu")])
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif query.data.startswith("res_"):
+    elif query.data.startswith("bet_win_") or query.data.startswith("bet_loss_"):
         parts = query.data.split("_")
-        esito = parts[1]
+        esito = "WON" if parts[1] == "win" else "LOST"
         bet_id = int(parts[2])
+        user_id = query.from_user.id
 
-        update_bet_result(bet_id, query.from_user.id, esito)
-        status_label = "🟢 VINTA" if esito == "WON" else "🔴 PERSA"
-        await query.answer(f"Bet #{bet_id} contrassegnata come {status_label}!", show_alert=True)
-        query.data = "manage_pending_bets"
+        update_bet_result(bet_id, user_id, esito)
+        await query.answer(f"Aggiornato esito a {esito}!", show_alert=True)
+        
+        # Ricarica la lista scommesse
+        fake_query = type('obj', (object,), {'callback_query': query, 'from_user': query.from_user})
+        # Rimanda alla visualizzazione delle scommesse
+        query.data = "view_bets"
         await button_handler(update, context)
 
-    elif query.data == "confirm_reset":
-        msg = "⚠️ **Sei sicuro di voler azzerare lo storico e il bankroll?**"
-        keyboard = [
-            [InlineKeyboardButton("✅ Sì, Azzera Tutto", callback_data="do_reset")],
-            [InlineKeyboardButton("❌ Annulla", callback_data="manage_bankroll")]
-        ]
-        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+async def manage_bankroll_view(query, user_id):
+    cap_init, cap_att = get_user_bankroll(user_id)
+    msg = (
+        "💰 **GESTIONE BANKROLL & CAPITALE**\n\n"
+        f"• **Capitale Iniziale:** `{cap_init:.2f}€`\n"
+        f"• **Capitale Attuale:** `{cap_att:.2f}€`\n\n"
+        "Scegli un'opzione:"
+    )
+    keyboard = [
+        [InlineKeyboardButton("✏️ Imposta nuovo Capitale", callback_data="set_bankroll_prompt")],
+        [InlineKeyboardButton("🔄 Reset Statistiche e Bankroll", callback_data="reset_bankroll_confirm")],
+        [InlineKeyboardButton("🏠 Menu Principale", callback_data="main_menu")]
+    ]
+    await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif query.data == "do_reset":
-        reset_user_stats(query.from_user.id)
-        msg = "🧹 **Statistiche e storico azzerati con successo!**"
-        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]]))
-
-    elif query.data == "set_cassa":
-        context.user_data["awaiting_bankroll"] = True
-        await query.message.reply_text("✍️ **Scrivi l'importo della cassa iniziale in Euro (es. `200`):**")
-
-    elif query.data == "main_menu":
-        await start(update, context)
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    text = update.message.text.strip().replace(",", ".")
-
+async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     if context.user_data.get("awaiting_bankroll"):
+        text = update.message.text.strip().replace(",", ".")
         try:
-            nuova_cassa = float(text)
-            set_user_bankroll(user_id, nuova_cassa)
+            nuovo_capitale = float(text)
+            if nuovo_capitale <= 0:
+                raise ValueError()
+            set_user_bankroll(user_id, nuovo_capitale)
             context.user_data["awaiting_bankroll"] = False
-            await update.message.reply_text(f"✅ **Bankroll aggiornato a `{nuova_cassa:.2f}€`!**", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]]))
-            return
+            await update.message.reply_text(f"✅ Capitale aggiornato con successo a `{nuovo_capitale:.2f}€`!", parse_mode="Markdown")
+            await start(update, context)
         except ValueError:
-            await update.message.reply_text("❌ Inserisci un numero valido.")
-            return
-
-async def post_init(application: Application):
-    await application.bot.set_my_commands([BotCommand("start", "Apri Menu Principale")])
+            await update.message.reply_text("❌ Valore non valido. Inserisci un numero maggiore di zero (es. `150`):", parse_mode="Markdown")
 
 def main():
     init_db()
-    app = Application.builder().token(TOKEN).post_init(post_init).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🤖 Bot Telegram avviato con mercati multipli Bet365 reali e calcolo difficoltà probabilistico...")
-    app.run_polling()
+    application = Application.builder().token(TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
+
+    print("🤖 Bot avviato correttamente e in ascolto...")
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
