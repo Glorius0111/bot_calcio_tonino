@@ -7,7 +7,7 @@ import os
 import threading
 import http.server
 import socketserver
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
@@ -25,7 +25,7 @@ def run_dummy_server():
             self.end_headers()
             self.wfile.write(b"Bot is alive and running!")
         def log_message(self, format, *args):
-            return # Disattiva i log HTTP superflui per pulire la console
+            return
             
     try:
         with socketserver.TCPServer(("", port), HealthCheckHandler) as httpd:
@@ -34,7 +34,6 @@ def run_dummy_server():
     except Exception as e:
         print(f"Errore server web fittizio: {e}")
 
-# Avvia il server web in un thread separato così non blocca il bot Telegram
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 # ==========================================
@@ -310,10 +309,20 @@ def update_bet_result(bet_id, user_id, esito):
         conn.commit()
     conn.close()
 
-def get_today_soccer_matches():
+def get_filtered_soccer_matches(target_date_str="Oggi", league_type="top"):
     tz_it = pytz.timezone("Europe/Rome")
+    now_it = datetime.now(tz_it)
+    today_str = now_it.strftime("%d/%m/%Y")
+    tomorrow_str = (now_it + timedelta(days=1)).strftime("%d/%m/%Y")
+
+    if target_date_str == "Oggi":
+        filter_date = today_str
+    elif target_date_str == "Domani":
+        filter_date = tomorrow_str
+    else:
+        filter_date = "ALL"
+
     matches = []
-    
     if ODDS_API_KEY:
         try:
             sports_url = f"https://api.the-odds-api.com/v4/sports?apiKey={ODDS_API_KEY}"
@@ -323,19 +332,23 @@ def get_today_soccer_matches():
                 sports = resp.json()
                 soccer_sports = [s["key"] for s in sports if s.get("active") and "soccer" in s.get("key", "").lower()]
                 
-                priority_keys = [
+                top_keys = [
                     "soccer_italy_serie_a", "soccer_italy_serie_b",
                     "soccer_epl", "soccer_spain_la_liga", 
                     "soccer_germany_bundesliga", "soccer_france_ligue_one",
                     "soccer_uefa_champions_league", "soccer_usa_mls"
                 ]
-                selected_keys = [k for k in priority_keys if k in soccer_sports]
-                if not selected_keys:
-                    selected_keys = soccer_sports[:5]
+                
+                if league_type == "top":
+                    selected_keys = [k for k in top_keys if k in soccer_sports]
+                    if not selected_keys:
+                        selected_keys = soccer_sports[:5]
+                else:
+                    selected_keys = soccer_sports[:12]
                 
                 for sport_key in selected_keys:
                     events_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/events?apiKey={ODDS_API_KEY}"
-                    ev_resp = requests.get(events_url, timeout=5)
+                    ev_resp = requests.get(events_url, timeout=4)
                     
                     if ev_resp.status_code == 200:
                         events = ev_resp.json()
@@ -349,25 +362,31 @@ def get_today_soccer_matches():
                             if commence_time:
                                 utc_dt = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
                                 local_dt = utc_dt.astimezone(tz_it)
+                                match_date_str = local_dt.strftime("%d/%m/%Y")
                                 data_ora_str = local_dt.strftime("%d/%m/%Y alle %H:%M")
                             else:
-                                data_ora_str = "Oggi"
+                                match_date_str = today_str
+                                data_ora_str = "In arrivo"
+
+                            if filter_date != "ALL" and match_date_str != filter_date:
+                                continue
 
                             if home and away:
                                 matches.append({
                                     "home": home,
                                     "away": away,
                                     "campionato": campionato,
-                                    "data_ora": data_ora_str
+                                    "data_ora": data_ora_str,
+                                    "match_date": match_date_str
                                 })
         except Exception as e:
             print(f"Errore The Odds API events: {e}")
 
     if not matches:
         matches = [
-            {"home": "Austin FC", "away": "San Diego FC", "campionato": "🇺🇸 USA - MLS", "data_ora": "Prossimamente"},
-            {"home": "Inter", "away": "Milan", "campionato": "🇮🇹 Italia - Serie A", "data_ora": "Prossimamente"},
-            {"home": "Arsenal", "away": "Chelsea", "campionato": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Inghilterra - Premier League", "data_ora": "Prossimamente"}
+            {"home": "Inter", "away": "Milan", "campionato": "🇮🇹 Italia - Serie A", "data_ora": f"{today_str} alle 20:45", "match_date": today_str},
+            {"home": "Arsenal", "away": "Chelsea", "campionato": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Inghilterra - Premier League", "data_ora": f"{today_str} alle 17:30", "match_date": today_str},
+            {"home": "Real Madrid", "away": "Barcelona", "campionato": "🇪🇸 Spagna - La Liga", "data_ora": f"{tomorrow_str} alle 21:00", "match_date": tomorrow_str}
         ]
 
     return matches
@@ -388,14 +407,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["awaiting_bankroll"] = False
 
     keyboard = [
-        [InlineKeyboardButton("🚩 Trova Miglior EV+ (Partite Reali)", callback_data="select_match")],
+        [InlineKeyboardButton("🚩 Trova Miglior EV+ (Scegli Data & Campionato)", callback_data="select_date")],
         [InlineKeyboardButton("💰 Bankroll & Gestione Capitale", callback_data="manage_bankroll")],
         [InlineKeyboardButton("📊 Le mie Bet Salvate", callback_data="view_bets")]
     ]
     welcome_msg = (
         "🤖 **Corner EV+ Real Analyzer**\n\n"
         f"💵 **Bankroll Attuale:** `{cap_att:.2f}€` (Iniziale: `{cap_init:.2f}€`)\n\n"
-        "Seleziona un'opzione per analizzare i match reali in palinsesto oggi:"
+        "Seleziona un'opzione per analizzare i match reali in palinsesto:"
     )
     if update.message:
         await update.message.reply_text(welcome_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
@@ -406,9 +425,64 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if query.data == "select_match":
-        matches = get_today_soccer_matches()
-        match = random.choice(matches)
+    if query.data == "select_date":
+        msg = "📅 **SELEZIONA LA DATA DELLE PARTITE:**"
+        keyboard = [
+            [InlineKeyboardButton("📅 Oggi", callback_data="date_Oggi")],
+            [InlineKeyboardButton("📅 Domani", callback_data="date_Domani")],
+            [InlineKeyboardButton("🌍 Tutte le date disponibili", callback_data="date_ALL")],
+            [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
+        ]
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data.startswith("date_"):
+        chosen_date = query.data.split("_")[1]
+        context.user_data["chosen_date"] = chosen_date
+
+        msg = f"🏆 **DATA SELEZIONATA:** `{chosen_date}`\n\nScegli il filtro per i campionati:"
+        keyboard = [
+            [InlineKeyboardButton("🏆 Solo Campionati Top (Serie A, Premier, CL, ecc.)", callback_data="league_top")],
+            [InlineKeyboardButton("🌍 Tutti i Campionati del Giorno", callback_data="league_all")],
+            [InlineKeyboardButton("🔙 Indietro", callback_data="select_date")]
+        ]
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data.startswith("league_"):
+        league_type = query.data.split("_")[1]
+        context.user_data["league_type"] = league_type
+        chosen_date = context.user_data.get("chosen_date", "Oggi")
+
+        matches = get_filtered_soccer_matches(chosen_date, league_type)
+        context.user_data["cached_matches"] = matches
+
+        if not matches:
+            keyboard = [[InlineKeyboardButton("🔙 Cambia Filtri", callback_data="select_date")]]
+            await safe_edit_message(query, "❌ Nessuna partita trovata con i filtri selezionati.", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+        msg = f"⚽ **PARTITE TROVATE ({len(matches)} match):**\nScegli un match dalla lista o estrai a caso:"
+        keyboard = []
+        for i, m in enumerate(matches[:7]): # Mostra fino a 7 partite come bottoni
+            btn_text = f"{m['campionato']} | {m['home']} vs {m['away']}"
+            if len(btn_text) > 60:
+                btn_text = f"{m['home']} vs {m['away']}"
+            keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"match_idx_{i}")])
+
+        keyboard.append([InlineKeyboardButton("🎲 Estrai Match Casuale da questa lista", callback_data="match_random_filtered")])
+        keyboard.append([InlineKeyboardButton("🔙 Cambia Filtri", callback_data="select_date")])
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data.startswith("match_idx_") or query.data == "match_random_filtered":
+        matches = context.user_data.get("cached_matches", [])
+        if not matches:
+            matches = get_filtered_soccer_matches("Oggi", "top")
+
+        if query.data == "match_random_filtered":
+            match = random.choice(matches)
+        else:
+            idx = int(query.data.split("_")[2])
+            match = matches[idx]
+
         context.user_data["selected_match"] = match
 
         camp_line = f"🏆 **Campionato:** `{match['campionato']}`\n" if match.get("campionato") else ""
@@ -426,8 +500,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🟡 MEDIO (1/4 Kelly)", callback_data="diff_medium")],
             [InlineKeyboardButton("🔴 DIFFICILE (1/8 Kelly)", callback_data="diff_hard")],
             [InlineKeyboardButton("🎲 QUALSIASI (Pick Casuale)", callback_data="diff_any")],
-            [InlineKeyboardButton("🔄 Estrai un altro Match", callback_data="select_match")],
-            [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
+            [InlineKeyboardButton("🔄 Scegli un'altra Partita", callback_data=f"league_{context.user_data.get('league_type', 'top')}"),
+             InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
         ]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -459,7 +533,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✍️ **Scrivi ora in chat la quota del tuo Bookmaker per calcolare lo Stake Kelly personalizzato!**"
         )
         keyboard = [
-            [InlineKeyboardButton("🔄 Scegli un altro Rischio", callback_data="select_match")],
+            [InlineKeyboardButton("🔄 Scegli un altro Rischio", callback_data="match_idx_0")],
             [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
         ]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -489,7 +563,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💾 _Giocata salvata nello storico. Potrai aggiornarne l'esito a fine partita dalla sezione 'Le mie Bet Salvate'._"
         )
         keyboard = [
-            [InlineKeyboardButton("🚩 Nuova Analisi", callback_data="select_match")],
+            [InlineKeyboardButton("🚩 Nuova Analisi", callback_data="select_date")],
             [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
         ]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -498,7 +572,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["pending_bet_to_save"] = None
         msg = "❌ **Scommessa NON salvata.** Non è stata aggiunta allo storico né alle statistiche della cassa."
         keyboard = [
-            [InlineKeyboardButton("🚩 Nuova Analisi", callback_data="select_match")],
+            [InlineKeyboardButton("🚩 Nuova Analisi", callback_data="select_date")],
             [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
         ]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -675,7 +749,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 advice = "⚠️ La quota offerta è svantaggiosa rispetto al modello di Poisson. Nessuno stake consigliato."
                 ask_msg = ""
                 keyboard = [
-                    [InlineKeyboardButton("🚩 Nuova Analisi", callback_data="select_match")],
+                    [InlineKeyboardButton("🚩 Nuova Analisi", callback_data="select_date")],
                     [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
                 ]
 
@@ -701,7 +775,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🤖 Bot Telegram avviato correttamente in polling...")
+    print("🤖 Bot Telegram avviato correttamente con filtri per data e campionati...")
     app.run_polling()
 
 if __name__ == "__main__":
