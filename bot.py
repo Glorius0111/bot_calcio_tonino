@@ -131,7 +131,7 @@ def resolve_team_goals_metrics(team_name, is_home, league_avg_goals):
         against_stat = round(half_league * random.uniform(1.02, 1.15), 2)
     return for_stat, against_stat
 
-def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_dict):
+def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_dict, target_diff="all"):
     camp_key = campionato.lower().strip() if campionato else "default"
     league_mean = 2.70
     for key, avg in LEAGUE_GOALS_DATABASE.items():
@@ -147,7 +147,6 @@ def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_di
     exp_away_goals = (away_scored * home_conceded) / half_league
     total_exp_goals = exp_home_goals + exp_away_goals
 
-    # Matrice di Poisson (fino a 6 gol per squadra)
     max_goals = 6
     matrix = [[0.0] * (max_goals + 1) for _ in range(max_goals + 1)]
     
@@ -166,30 +165,24 @@ def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_di
             else:
                 prob_away_win += p
 
-    # --- CALCOLO DI TUTTI I MERCATI POSSIBILI ---
-    # 1. Doppia Chance
     prob_dc_1x = prob_home_win + prob_draw
     prob_dc_x2 = prob_away_win + prob_draw
     prob_dc_12 = prob_home_win + prob_away_win
 
-    # 2. Draw No Bet (DNB)
     dnb_denom = prob_home_win + prob_away_win
     prob_dnb_1 = prob_home_win / dnb_denom if dnb_denom > 0 else 0.5
     prob_dnb_2 = prob_away_win / dnb_denom if dnb_denom > 0 else 0.5
 
-    # 3. Under / Over (0.5, 1.5, 2.5, 3.5, 4.5)
     ou_probs = {}
     for line in [0.5, 1.5, 2.5, 3.5, 4.5]:
         p_over = sum(matrix[i][j] for i in range(max_goals+1) for j in range(max_goals+1) if (i + j) > line)
         ou_probs[line] = (p_over, 1.0 - p_over)
 
-    # 4. BTTS / Goal-No Goal
     p_home_zero = sum(matrix[0][j] for j in range(max_goals + 1))
     p_away_zero = sum(matrix[i][0] for i in range(max_goals + 1))
     prob_btts_yes = (1.0 - p_home_zero) * (1.0 - p_away_zero)
     prob_btts_no = 1.0 - prob_btts_yes
 
-    # 5. Goal Casa / Ospite (Over/Under 0.5 e 1.5)
     prob_home_over_05 = 1.0 - p_home_zero
     prob_home_under_05 = p_home_zero
     p_home_up_15 = sum(matrix[0][j] + matrix[1][j] for j in range(max_goals + 1))
@@ -202,68 +195,53 @@ def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_di
     prob_away_over_15 = 1.0 - p_away_up_15
     prob_away_under_15 = p_away_up_15
 
-    # 6. Multigol
     prob_mg_1_3 = sum(matrix[i][j] for i in range(max_goals+1) for j in range(max_goals+1) if 1 <= (i + j) <= 3)
     prob_mg_1_4 = sum(matrix[i][j] for i in range(max_goals+1) for j in range(max_goals+1) if 1 <= (i + j) <= 4)
     prob_mg_2_4 = sum(matrix[i][j] for i in range(max_goals+1) for j in range(max_goals+1) if 2 <= (i + j) <= 4)
     prob_mg_2_5 = sum(matrix[i][j] for i in range(max_goals+1) for j in range(max_goals+1) if 2 <= (i + j) <= 5)
 
-    # 7. Risultati Esatti principali
     p_10, p_20, p_21 = matrix[1][0], matrix[2][0], matrix[2][1]
     p_01, p_02, p_12 = matrix[0][1], matrix[0][2], matrix[1][2]
     p_11, p_00, p_22 = matrix[1][1], matrix[0][0], matrix[2][2]
 
-    # Lista esaustiva di TUTTI i mercati calcistici valutabili
     candidates = [
-        # 1X2
-        {"cat": "🏆 Segno 1X2", "pick": f"1 ({home_team} Vincente)", "type": "1x2_1", "prob": prob_home_win, "diff": "medium", "kelly": 4.0},
-        {"cat": "🏆 Segno 1X2", "pick": "X (Pareggio)", "type": "1x2_X", "prob": prob_draw, "diff": "hard", "kelly": 8.0},
-        {"cat": "🏆 Segno 1X2", "pick": f"2 ({away_team} Vincente)", "type": "1x2_2", "prob": prob_away_win, "diff": "medium", "kelly": 4.0},
-        
-        # Doppia Chance
+        # Facili (Alta probabilità / Basse quote)
         {"cat": "🛡️ Doppia Chance", "pick": f"1X ({home_team} o Pareggio)", "type": "dc_1x", "prob": prob_dc_1x, "diff": "easy", "kelly": 2.0},
         {"cat": "🛡️ Doppia Chance", "pick": f"X2 (Pareggio o {away_team})", "type": "dc_x2", "prob": prob_dc_x2, "diff": "easy", "kelly": 2.0},
-        {"cat": "🛡️ Doppia Chance", "pick": f"12 ({home_team} o {away_team})", "type": "dc_12", "prob": prob_dc_12, "diff": "medium", "kelly": 3.0},
-
-        # Draw No Bet
-        {"cat": "🔄 Draw No Bet (DNB)", "pick": f"1 DNB ({home_team})", "type": "dnb_1", "prob": prob_dnb_1, "diff": "easy", "kelly": 3.0},
-        {"cat": "🔄 Draw No Bet (DNB)", "pick": f"2 DNB ({away_team})", "type": "dnb_2", "prob": prob_dnb_2, "diff": "easy", "kelly": 3.0},
-
-        # Under / Over Goal
         {"cat": "⚽ Under/Over 0.5", "pick": "Over 0.5 Goal", "type": "over_05", "prob": ou_probs[0.5][0], "diff": "easy", "kelly": 1.5},
-        {"cat": "⚽ Under/Over 0.5", "pick": "Under 0.5 Goal", "type": "under_05", "prob": ou_probs[0.5][1], "diff": "hard", "kelly": 8.0},
         {"cat": "⚽ Under/Over 1.5", "pick": "Over 1.5 Goal", "type": "over_15", "prob": ou_probs[1.5][0], "diff": "easy", "kelly": 2.0},
-        {"cat": "⚽ Under/Over 1.5", "pick": "Under 1.5 Goal", "type": "under_15", "prob": ou_probs[1.5][1], "diff": "medium", "kelly": 4.0},
-        {"cat": "⚽ Under/Over 2.5", "pick": "Over 2.5 Goal", "type": "over_25", "prob": ou_probs[2.5][0], "diff": "easy", "kelly": 2.0},
-        {"cat": "⚽ Under/Over 2.5", "pick": "Under 2.5 Goal", "type": "under_25", "prob": ou_probs[2.5][1], "diff": "medium", "kelly": 4.0},
-        {"cat": "⚽ Under/Over 3.5", "pick": "Over 3.5 Goal", "type": "over_35", "prob": ou_probs[3.5][0], "diff": "medium", "kelly": 4.0},
         {"cat": "⚽ Under/Over 3.5", "pick": "Under 3.5 Goal", "type": "under_35", "prob": ou_probs[3.5][1], "diff": "easy", "kelly": 2.0},
-        {"cat": "⚽ Under/Over 4.5", "pick": "Over 4.5 Goal", "type": "over_45", "prob": ou_probs[4.5][0], "diff": "hard", "kelly": 8.0},
         {"cat": "⚽ Under/Over 4.5", "pick": "Under 4.5 Goal", "type": "under_45", "prob": ou_probs[4.5][1], "diff": "easy", "kelly": 1.5},
-
-        # BTTS / Goal - No Goal
-        {"cat": "🥅 Entrambe a Segno", "pick": "Goal / BTTS Sì", "type": "btts_yes", "prob": prob_btts_yes, "diff": "easy", "kelly": 2.0},
-        {"cat": "🥅 Entrambe a Segno", "pick": "No Goal / BTTS No", "type": "btts_no", "prob": prob_btts_no, "diff": "medium", "kelly": 4.0},
-
-        # Squadra Casa
         {"cat": f"🏠 {home_team} - Gol", "pick": "Casa Over 0.5", "type": "home_over_05", "prob": prob_home_over_05, "diff": "easy", "kelly": 2.0},
-        {"cat": f"🏠 {home_team} - Gol", "pick": "Casa Under 0.5", "type": "home_under_05", "prob": prob_home_under_05, "diff": "hard", "kelly": 8.0},
-        {"cat": f"🏠 {home_team} - Gol", "pick": "Casa Over 1.5", "type": "home_over_15", "prob": prob_home_over_15, "diff": "medium", "kelly": 3.0},
-        {"cat": f"🏠 {home_team} - Gol", "pick": "Casa Under 1.5", "type": "home_under_15", "prob": prob_home_under_15, "diff": "medium", "kelly": 3.0},
-
-        # Squadra Ospite
         {"cat": f"✈️ {away_team} - Gol", "pick": "Ospite Over 0.5", "type": "away_over_05", "prob": prob_away_over_05, "diff": "easy", "kelly": 2.0},
-        {"cat": f"✈️ {away_team} - Gol", "pick": "Ospite Under 0.5", "type": "away_under_05", "prob": prob_away_under_05, "diff": "hard", "kelly": 8.0},
-        {"cat": f"✈️ {away_team} - Gol", "pick": "Ospite Over 1.5", "type": "away_over_15", "prob": prob_away_over_15, "diff": "medium", "kelly": 4.0},
         {"cat": f"✈️ {away_team} - Gol", "pick": "Ospite Under 1.5", "type": "away_under_15", "prob": prob_away_under_15, "diff": "easy", "kelly": 2.0},
-
-        # Multigol
         {"cat": "🎯 Multigol", "pick": "Multigol 1-3", "type": "mg_1_3", "prob": prob_mg_1_3, "diff": "easy", "kelly": 2.0},
         {"cat": "🎯 Multigol", "pick": "Multigol 1-4", "type": "mg_1_4", "prob": prob_mg_1_4, "diff": "easy", "kelly": 1.8},
+
+        # Medie (Bilanciate)
+        {"cat": "🏆 Segno 1X2", "pick": f"1 ({home_team} Vincente)", "type": "1x2_1", "prob": prob_home_win, "diff": "medium", "kelly": 4.0},
+        {"cat": "🏆 Segno 1X2", "pick": f"2 ({away_team} Vincente)", "type": "1x2_2", "prob": prob_away_win, "diff": "medium", "kelly": 4.0},
+        {"cat": "🛡️ Doppia Chance", "pick": f"12 ({home_team} o {away_team})", "type": "dc_12", "prob": prob_dc_12, "diff": "medium", "kelly": 3.0},
+        {"cat": "🔄 Draw No Bet (DNB)", "pick": f"1 DNB ({home_team})", "type": "dnb_1", "prob": prob_dnb_1, "diff": "medium", "kelly": 3.0},
+        {"cat": "🔄 Draw No Bet (DNB)", "pick": f"2 DNB ({away_team})", "type": "dnb_2", "prob": prob_dnb_2, "diff": "medium", "kelly": 3.0},
+        {"cat": "⚽ Under/Over 1.5", "pick": "Under 1.5 Goal", "type": "under_15", "prob": ou_probs[1.5][1], "diff": "medium", "kelly": 4.0},
+        {"cat": "⚽ Under/Over 2.5", "pick": "Over 2.5 Goal", "type": "over_25", "prob": ou_probs[2.5][0], "diff": "medium", "kelly": 2.0},
+        {"cat": "⚽ Under/Over 2.5", "pick": "Under 2.5 Goal", "type": "under_25", "prob": ou_probs[2.5][1], "diff": "medium", "kelly": 4.0},
+        {"cat": "⚽ Under/Over 3.5", "pick": "Over 3.5 Goal", "type": "over_35", "prob": ou_probs[3.5][0], "diff": "medium", "kelly": 4.0},
+        {"cat": "🥅 Entrambe a Segno", "pick": "Goal / BTTS Sì", "type": "btts_yes", "prob": prob_btts_yes, "diff": "medium", "kelly": 2.0},
+        {"cat": "🥅 Entrambe a Segno", "pick": "No Goal / BTTS No", "type": "btts_no", "prob": prob_btts_no, "diff": "medium", "kelly": 4.0},
+        {"cat": f"🏠 {home_team} - Gol", "pick": "Casa Over 1.5", "type": "home_over_15", "prob": prob_home_over_15, "diff": "medium", "kelly": 3.0},
+        {"cat": f"🏠 {home_team} - Gol", "pick": "Casa Under 1.5", "type": "home_under_15", "prob": prob_home_under_15, "diff": "medium", "kelly": 3.0},
+        {"cat": f"✈️ {away_team} - Gol", "pick": "Ospite Over 1.5", "type": "away_over_15", "prob": prob_away_over_15, "diff": "medium", "kelly": 4.0},
         {"cat": "🎯 Multigol", "pick": "Multigol 2-4", "type": "mg_2_4", "prob": prob_mg_2_4, "diff": "medium", "kelly": 3.0},
         {"cat": "🎯 Multigol", "pick": "Multigol 2-5", "type": "mg_2_5", "prob": prob_mg_2_5, "diff": "medium", "kelly": 2.5},
 
-        # Risultati Esatti
+        # Difficili / Risky (Alte quote / Esatti / Under stretti)
+        {"cat": "🏆 Segno 1X2", "pick": "X (Pareggio)", "type": "1x2_X", "prob": prob_draw, "diff": "hard", "kelly": 8.0},
+        {"cat": "⚽ Under/Over 0.5", "pick": "Under 0.5 Goal", "type": "under_05", "prob": ou_probs[0.5][1], "diff": "hard", "kelly": 8.0},
+        {"cat": "⚽ Under/Over 4.5", "pick": "Over 4.5 Goal", "type": "over_45", "prob": ou_probs[4.5][0], "diff": "hard", "kelly": 8.0},
+        {"cat": f"🏠 {home_team} - Gol", "pick": "Casa Under 0.5", "type": "home_under_05", "prob": prob_home_under_05, "diff": "hard", "kelly": 8.0},
+        {"cat": f"✈️ {away_team} - Gol", "pick": "Ospite Under 0.5", "type": "away_under_05", "prob": prob_away_under_05, "diff": "hard", "kelly": 8.0},
         {"cat": "🔢 Risultato Esatto", "pick": "Risultato Esatto 1-0", "type": "cs_1_0", "prob": p_10, "diff": "hard", "kelly": 8.0},
         {"cat": "🔢 Risultato Esatto", "pick": "Risultato Esatto 2-0", "type": "cs_2_0", "prob": p_20, "diff": "hard", "kelly": 10.0},
         {"cat": "🔢 Risultato Esatto", "pick": "Risultato Esatto 2-1", "type": "cs_2_1", "prob": p_21, "diff": "hard", "kelly": 8.0},
@@ -274,6 +252,10 @@ def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_di
         {"cat": "🔢 Risultato Esatto", "pick": "Risultato Esatto 0-0", "type": "cs_0_0", "prob": p_00, "diff": "hard", "kelly": 10.0},
         {"cat": "🔢 Risultato Esatto", "pick": "Risultato Esatto 2-2", "type": "cs_2_2", "prob": p_22, "diff": "hard", "kelly": 10.0},
     ]
+
+    # Filtra in base alla difficoltà scelta se non è 'all'
+    if target_diff != "all":
+        candidates = [c for c in candidates if c["diff"] == target_diff]
 
     best_value_bet = None
     max_value_rate = -999.0
@@ -292,6 +274,9 @@ def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_di
 
         if value_rate > max_value_rate:
             max_value_rate = value_rate
+            diff_icons = {"easy": "🟢 FACILE", "medium": "🟡 MEDIA", "hard": "🔴 DIFFICOLTÀ / RISKY"}
+            d_label = diff_icons.get(cand["diff"], "⭐ VALORE")
+
             analysis_text = (
                 f"• **Expected Goals (xG):** `{total_exp_goals:.2f}` attesi totali (`{exp_home_goals:.2f}` {home_team} - `{exp_away_goals:.2f}` {away_team}).\n"
                 f"• **Media Torneo:** `{league_mean}` gol/partita.\n"
@@ -310,7 +295,7 @@ def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_di
                 "value_rate": value_rate,
                 "value_rate_pct": round(value_rate * 100, 1),
                 "kelly_divisor": cand["kelly"],
-                "diff_label": f"🟢 {cand['diff'].upper()} (All Markets EV+)",
+                "diff_label": d_label,
                 "analysis": analysis_text
             }
 
@@ -400,7 +385,7 @@ def update_bet_result(bet_id, user_id, esito):
         conn.commit()
     conn.close()
 
-def scan_bet365_value_bets(target_date_str="Oggi", league_type="top"):
+def scan_bet365_value_bets(target_date_str="Oggi", league_type="top", target_diff="all"):
     tz_it = pytz.timezone("Europe/Rome")
     now_it = datetime.now(tz_it)
     today_str = now_it.strftime("%d/%m/%Y")
@@ -481,7 +466,7 @@ def scan_bet365_value_bets(target_date_str="Oggi", league_type="top"):
                                                         b365_dict["under_25"] = price
 
                             if home and away:
-                                v_bet = analyze_match_comprehensive(home, away, campionato, b365_dict)
+                                v_bet = analyze_match_comprehensive(home, away, campionato, b365_dict, target_diff)
                                 if v_bet:
                                     v_bet["data_ora"] = data_ora_str
                                     value_bets.append(v_bet)
@@ -505,14 +490,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["awaiting_bankroll"] = False
 
     keyboard = [
-        [InlineKeyboardButton("🔍 Scansiona Tutti i Mercati (Bet365)", callback_data="select_date")],
+        [InlineKeyboardButton("🔍 Scansiona Value Bets (Bet365)", callback_data="select_date")],
         [InlineKeyboardButton("💰 Bankroll & Gestione Capitale", callback_data="manage_bankroll")],
         [InlineKeyboardButton("📊 Le mie Bet Salvate", callback_data="view_bets")]
     ]
     welcome_msg = (
-        "🤖 **Bet365 All-Markets AI Value Bot**\n\n"
+        "🤖 **Bet365 AI Value Bot (Multi-Livello)**\n\n"
         f"💵 **Bankroll Attuale:** `{cap_att:.2f}€` (Iniziale: `{cap_init:.2f}€`)\n\n"
-        "Scansione di **tutti i mercati possibili** (1X2, Doppia Chance, DNB, Under/Over da 0.5 a 4.5, BTTS, Gol Casa/Ospite, Multigol e Risultati Esatti) con analisi completa Poisson e quote Bet365:"
+        "Seleziona una funzione per iniziare l'analisi statistica e scoprire le migliori opportunità di valore:"
     )
     if update.message:
         await update.message.reply_text(welcome_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
@@ -524,7 +509,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if query.data == "select_date":
-        msg = "📅 **SELEZIONA LA DATA PER LA SCANSIONE DI TUTTI I MERCATI:**"
+        msg = "📅 **SELEZIONA LA DATA PER LA SCANSIONE:**"
         keyboard = [
             [InlineKeyboardButton("📅 Oggi", callback_data="date_Oggi")],
             [InlineKeyboardButton("📅 Domani", callback_data="date_Domani")],
@@ -547,19 +532,39 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data.startswith("league_"):
         league_type = query.data.split("_")[1]
+        context.user_data["league_type"] = league_type
+
+        msg = "🎚️ **SELEZIONA IL LIVELLO DI DIFFICOLTÀ / RISCHIO:**"
+        keyboard = [
+            [InlineKeyboardButton("🟢 Facile (Alta Probabilità)", callback_data="diff_easy")],
+            [InlineKeyboardButton("🟡 Media (Equilibrata)", callback_data="diff_medium")],
+            [InlineKeyboardButton("🔴 Difficile (Alte Quote / Esatti)", callback_data="diff_hard")],
+            [InlineKeyboardButton("🌟 Tutte le Difficoltà", callback_data="diff_all")],
+            [InlineKeyboardButton("🔙 Indietro", callback_data="date_" + context.user_data.get("chosen_date", "Oggi"))]
+        ]
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data.startswith("diff_"):
+        target_diff = query.data.split("_")[1]
+        context.user_data["target_diff"] = target_diff
+        
         chosen_date = context.user_data.get("chosen_date", "Oggi")
+        league_type = context.user_data.get("league_type", "top")
 
-        await safe_edit_message(query, f"🔍 **Scansione totale in corso su Bet365 (`{chosen_date}`). Analisi di tutti i mercati...** Attendere.")
+        diff_names = {"easy": "Facile", "medium": "Media", "hard": "Difficile", "all": "Tutte"}
+        diff_label = diff_names.get(target_diff, "Tutte")
 
-        value_bets = scan_bet365_value_bets(chosen_date, league_type)
+        await safe_edit_message(query, f"🔍 **Scansione Bet365 in corso (`{chosen_date}` | Livello: `{diff_label}`). Attendere...**")
+
+        value_bets = scan_bet365_value_bets(chosen_date, league_type, target_diff)
         context.user_data["cached_value_bets"] = value_bets
 
         if not value_bets:
             keyboard = [[InlineKeyboardButton("🔙 Cambia Filtri", callback_data="select_date")]]
-            await safe_edit_message(query, f"❌ Nessuna Value Bet trovata per la data `{chosen_date}`.", reply_markup=InlineKeyboardMarkup(keyboard))
+            await safe_edit_message(query, f"❌ Nessuna Value Bet trovata per i criteri selezionati (`{chosen_date}` - `{diff_label}`).", reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
-        msg = f"🎯 **VALUE BETS TROVATE ({len(value_bets)} match):**\nSeleziona una partita per vedere l'analisi completa e la quota su tutti i mercati:"
+        msg = f"🎯 **VALUE BETS TROVATE ({len(value_bets)} match - Livello: {diff_label}):**\nSeleziona una partita per vedere l'analisi completa:"
         keyboard = []
         for i, vb in enumerate(value_bets[:10]):
             btn_text = f"🔥 {vb['partita']} | {vb['pick']} @{vb['quota_bet365']}"
@@ -595,8 +600,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["pending_bet_to_save"] = vb
 
         msg = (
-            f"🚀 **ANALISI COMPLETA & VALUE BET (TUTTI I MERCATI)**\n\n"
-            f"📌 **Profilo:** `{vb['diff_label']}`\n"
+            f"🚀 **ANALISI COMPLETA & VALUE BET**\n\n"
+            f"📌 **Livello:** `{vb['diff_label']}`\n"
             f"🏆 **Campionato:** `{vb['campionato']}`\n"
             f"🏟 **Match:** `{vb['partita']}`\n"
             f"📅 **Data e Ora:** `{vb['data_ora']}`\n\n"
@@ -611,7 +616,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("✅ GIOCATA (Salva in Cassa)", callback_data="confirm_play_bet")],
             [InlineKeyboardButton("❌ NON GIOCATA (Annulla)", callback_data="cancel_play_bet")],
-            [InlineKeyboardButton("🔙 Torna alla Lista", callback_data="select_date")]
+            [InlineKeyboardButton("🔙 Torna alla Lista", callback_data="diff_" + context.user_data.get("target_diff", "all"))]
         ]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -782,7 +787,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🤖 Bot Telegram avviato con analisi totale su tutti i mercati e Bet365...")
+    print("🤖 Bot Telegram avviato con selettore di difficoltà e scansione Bet365...")
     app.run_polling()
 
 if __name__ == "__main__":
