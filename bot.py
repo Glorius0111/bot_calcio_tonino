@@ -66,7 +66,9 @@ SPORT_KEY_MAP = {
     "soccer_spain_la_liga": "🇪🇸 Spagna - La Liga",
     "soccer_germany_bundesliga": "🇩🇪 Germania - Bundesliga",
     "soccer_france_ligue_one": "🇫🇷 Francia - Ligue 1",
-    "soccer_uefa_champions_league": "🇪🇺 UEFA - Champions League"
+    "soccer_uefa_champions_league": "🇪🇺 UEFA - Champions League",
+    "soccer_netherlands_eredivisie": "🇳🇱 Olanda - Eredivisie",
+    "soccer_portugal_primeira_liga": "🇵🇹 Portogallo - Primeira Liga"
 }
 
 def clean_league_name(raw_name, sport_key=""):
@@ -147,7 +149,6 @@ def analyze_match_comprehensive(home_team, away_team, campionato, target_diff="a
     p_away_zero = sum(matrix[i][0] for i in range(max_goals + 1))
     prob_btts_yes = (1.0 - p_home_zero) * (1.0 - p_away_zero)
 
-    # Raccolta automatica di tutti i mercati principali e secondari
     candidates = [
         {"cat": "🏆 Risultato Finale (1X2)", "instruction": f"1 ({home_team} Vincente)", "pick": f"1 ({home_team} Vincente)", "prob": prob_home_win, "kelly": 4.0},
         {"cat": "🏆 Risultato Finale (1X2)", "instruction": "X (Pareggio)", "pick": "X (Pareggio)", "prob": prob_draw, "kelly": 8.0},
@@ -169,7 +170,6 @@ def analyze_match_comprehensive(home_team, away_team, campionato, target_diff="a
         fair_odd = 1.0 / prob
         diff_code, d_label = get_difficulty_from_probability(prob)
 
-        # Filtro per difficoltà (Facile, Media, Difficile, Tutte)
         if target_diff != "all" and diff_code != target_diff:
             continue
 
@@ -295,59 +295,70 @@ def scan_api_fixtures(target_date_str="Oggi", league_type="top", target_diff="al
 
     all_found_bets = []
 
-    if ODDS_API_KEY:
-        try:
-            sports_url = f"https://api.the-odds-api.com/v4/sports?apiKey={ODDS_API_KEY}"
-            resp = requests.get(sports_url, timeout=8)
-            if resp.status_code != 200:
-                return []
+    if not ODDS_API_KEY:
+        print("❌ ODDS_API_KEY mancante!")
+        return []
 
-            sports = resp.json()
-            soccer_sports = [s["key"] for s in sports if s.get("active") and "soccer" in s.get("key", "").lower()]
-            
-            top_keys = [
-                "soccer_italy_serie_a", "soccer_italy_serie_b",
-                "soccer_epl", "soccer_spain_la_liga", 
-                "soccer_germany_bundesliga", "soccer_france_ligue_one",
-                "soccer_uefa_champions_league", "soccer_usa_mls"
-            ]
-            
-            selected_keys = [k for k in top_keys if k in soccer_sports] if league_type == "top" else soccer_sports[:15]
+    try:
+        sports_url = f"https://api.the-odds-api.com/v4/sports?apiKey={ODDS_API_KEY}"
+        resp = requests.get(sports_url, timeout=10)
+        if resp.status_code != 200:
+            print(f"❌ Errore API sports (Status {resp.status_code}): {resp.text}")
+            return []
+
+        sports = resp.json()
+        soccer_sports = [s["key"] for s in sports if s.get("active") and "soccer" in s.get("key", "").lower()]
+        
+        top_keys = [
+            "soccer_italy_serie_a", "soccer_italy_serie_b",
+            "soccer_epl", "soccer_spain_la_liga", 
+            "soccer_germany_bundesliga", "soccer_france_ligue_one",
+            "soccer_uefa_champions_league", "soccer_usa_mls",
+            "soccer_netherlands_eredivisie", "soccer_portugal_primeira_liga"
+        ]
+        
+        if league_type == "top":
+            selected_keys = [k for k in top_keys if k in soccer_sports]
             if not selected_keys:
-                selected_keys = soccer_sports[:5]
+                selected_keys = soccer_sports[:10]
+        else:
+            selected_keys = soccer_sports
 
-            for sport_key in selected_keys:
-                odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=uk,eu&markets=h2h"
-                odds_resp = requests.get(odds_url, timeout=5)
-                if odds_resp.status_code != 200:
+        print(f"📡 Scansione reale in corso su {len(selected_keys)} campionati attivi...")
+
+        for sport_key in selected_keys:
+            odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=eu,uk&markets=h2h"
+            odds_resp = requests.get(odds_url, timeout=8)
+            if odds_resp.status_code != 200:
+                continue
+
+            events = odds_resp.json()
+            for ev in events:
+                home = ev.get("home_team")
+                away = ev.get("away_team")
+                sport_title = ev.get("sport_title", "")
+                campionato = clean_league_name(sport_title, sport_key)
+                commence_time = ev.get("commence_time")
+
+                if commence_time:
+                    utc_dt = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+                    local_dt = utc_dt.astimezone(tz_it)
+                    match_date_str = local_dt.strftime("%d/%m/%Y")
+                    data_ora_str = local_dt.strftime("%d/%m/%Y alle %H:%M")
+                else:
                     continue
 
-                events = odds_resp.json()
-                for ev in events:
-                    home = ev.get("home_team")
-                    away = ev.get("away_team")
-                    sport_title = ev.get("sport_title", "")
-                    campionato = clean_league_name(sport_title, sport_key)
-                    commence_time = ev.get("commence_time")
+                if filter_date != "ALL" and match_date_str != filter_date:
+                    continue
 
-                    if commence_time:
-                        utc_dt = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
-                        local_dt = utc_dt.astimezone(tz_it)
-                        match_date_str = local_dt.strftime("%d/%m/%Y")
-                        data_ora_str = local_dt.strftime("%d/%m/%Y alle %H:%M")
-                    else:
-                        continue
+                if home and away:
+                    match_candidates = analyze_match_comprehensive(home, away, campionato, target_diff)
+                    for mc in match_candidates:
+                        mc["data_ora"] = data_ora_str
+                        all_found_bets.append(mc)
 
-                    if filter_date != "ALL" and match_date_str != filter_date:
-                        continue
-
-                    if home and away:
-                        match_candidates = analyze_match_comprehensive(home, away, campionato, target_diff)
-                        for mc in match_candidates:
-                            mc["data_ora"] = data_ora_str
-                            all_found_bets.append(mc)
-        except Exception as e:
-            print(f"❌ Errore API: {e}")
+    except Exception as e:
+        print(f"❌ Errore durante la richiesta API: {e}")
 
     # ORDINAMENTO RIGOROSO PER PROBABILITÀ (Dalla più alta alla più bassa)
     all_found_bets.sort(key=lambda x: x["probabilita"], reverse=True)
@@ -369,12 +380,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["awaiting_real_odd"] = False
 
     keyboard = [
-        [InlineKeyboardButton("🔍 Scansiona Partite (API)", callback_data="select_date")],
+        [InlineKeyboardButton("🔍 Scansiona Partite Reali (API)", callback_data="select_date")],
         [InlineKeyboardButton("💰 Bankroll & Gestione Capitale", callback_data="manage_bankroll")],
         [InlineKeyboardButton("📊 Le mie Bet Salvate", callback_data="view_bets")]
     ]
     welcome_msg = (
-        "🤖 **AI Value Betting Bot (Poisson + Quota Utente)**\n\n"
+        "🤖 **AI Value Betting Bot (Dati Reali + Quota Utente)**\n\n"
         f"💵 **Bankroll Attuale:** `{cap_att:.2f}€`\n\n"
         "Seleziona un'opzione per iniziare:"
     )
@@ -436,17 +447,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         diff_names = {"easy": "Facile", "medium": "Media", "hard": "Difficile", "all": "Tutte"}
         diff_label = diff_names.get(target_diff, "Tutte")
 
-        await safe_edit_message(query, f"🔍 **Scansione partite in corso (`{chosen_date}` | `{diff_label}`). Attendere...**")
+        await safe_edit_message(query, f"🔍 **Scansione partite reali in corso (`{chosen_date}` | `{diff_label}`). Attendere...**")
 
         value_bets = scan_api_fixtures(chosen_date, league_type, target_diff)
         context.user_data["cached_value_bets"] = value_bets
 
         if not value_bets:
             keyboard = [[InlineKeyboardButton("🔙 Cambia Filtri", callback_data="select_date")]]
-            await safe_edit_message(query, f"❌ Nessuna giocata trovata per i criteri selezionati (`{chosen_date}`).", reply_markup=InlineKeyboardMarkup(keyboard))
+            await safe_edit_message(query, f"❌ Nessuna partita trovata tramite API per i criteri selezionati (`{chosen_date}`). Prova a selezionare 'Tutte le date' o 'Tutti i Campionati'.", reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
-        msg = f"🎯 **CLASSIFICATE PER PROBABILITÀ ({len(value_bets)} opzioni):**\nSeleziona una giocata:"
+        msg = f"🎯 **PARTITE REALI TROVATE ({len(value_bets)} opzioni):**\nSeleziona una giocata:"
         keyboard = []
         for i, vb in enumerate(value_bets[:12]):
             btn_text = f"{vb['probabilita']}% | {vb['partita']} -> {vb['pick']} (Fair: @{vb['quota_fair']})"
@@ -700,7 +711,7 @@ def main():
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🤖 Bot Telegram avviato con successo...")
+    print("🤖 Bot Telegram avviato con successo (100% API Reali)...")
     application.run_polling()
 
 if __name__ == "__main__":
