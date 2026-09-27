@@ -139,7 +139,7 @@ def get_difficulty_from_probability(prob):
     else:
         return "hard", "🔴 DIFFICOLTÀ / RISKY"
 
-def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_dict, target_diff="all"):
+def analyze_match_comprehensive(home_team, away_team, campionato, pinnacle_odds_dict, target_diff="all"):
     camp_key = campionato.lower().strip() if campionato else "default"
     league_mean = 2.70
     for key, avg in LEAGUE_GOALS_DATABASE.items():
@@ -225,13 +225,13 @@ def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_di
     valid_match_bets = []
 
     for cand in candidates:
-        b365_odd = bet365_odds_dict.get(cand["type"])
-        if not b365_odd:
+        pin_odd = pinnacle_odds_dict.get(cand["type"])
+        if not pin_odd:
             continue
 
         prob = max(0.005, min(0.995, cand["prob"]))
         fair_odd = 1.0 / prob
-        value_rate = (b365_odd * prob) - 1.0
+        value_rate = (pin_odd * prob) - 1.0
 
         diff_code, d_label = get_difficulty_from_probability(prob)
 
@@ -253,7 +253,7 @@ def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_di
             "pick": cand["pick"],
             "probabilita": round(prob * 100, 1),
             "quota_fair": round(fair_odd, 2),
-            "quota_bet365": b365_odd,
+            "quota_pinnacle": pin_odd,
             "value_rate": value_rate,
             "value_rate_pct": round(value_rate * 100, 1),
             "kelly_divisor": cand["kelly"],
@@ -351,7 +351,7 @@ def update_bet_result(bet_id, user_id, esito):
         conn.commit()
     conn.close()
 
-def scan_bet365_value_bets(target_date_str="Oggi", league_type="top", target_diff="all"):
+def scan_pinnacle_value_bets(target_date_str="Oggi", league_type="top", target_diff="all"):
     tz_it = pytz.timezone("Europe/Rome")
     now_it = datetime.now(tz_it)
     today_str = now_it.strftime("%d/%m/%Y")
@@ -384,7 +384,8 @@ def scan_bet365_value_bets(target_date_str="Oggi", league_type="top", target_dif
                 selected_keys = soccer_sports[:5]
 
             for sport_key in selected_keys:
-                odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=uk,eu&bookmakers=bet365&markets=h2h,totals,btts,draw_no_bet"
+                # Richiediamo Pinnacle come bookmaker di riferimento
+                odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=uk,eu&bookmakers=pinnacle&markets=h2h,totals,btts,draw_no_bet"
                 odds_resp = requests.get(odds_url, timeout=5)
                 
                 if odds_resp.status_code != 200:
@@ -413,9 +414,9 @@ def scan_bet365_value_bets(target_date_str="Oggi", league_type="top", target_dif
                     if filter_date != "ALL" and match_date_str != filter_date:
                         continue
 
-                    b365_dict = {}
+                    pin_dict = {}
                     for bm in ev.get("bookmakers", []):
-                        if bm.get("key") == "bet365":
+                        if bm.get("key") == "pinnacle":
                             for market in bm.get("markets", []):
                                 m_key = market.get("key")
                                 outcomes = market.get("outcomes", [])
@@ -425,32 +426,32 @@ def scan_bet365_value_bets(target_date_str="Oggi", league_type="top", target_dif
                                         name = outcome.get("name")
                                         price = outcome.get("price")
                                         if name == home:
-                                            b365_dict["1x2_1"] = price
-                                            b365_dict["dc_1x"] = round(price * 1.15, 2)
-                                            b365_dict["dc_12"] = round(price * 1.10, 2)
+                                            pin_dict["1x2_1"] = price
+                                            pin_dict["dc_1x"] = round(price * 1.15, 2)
+                                            pin_dict["dc_12"] = round(price * 1.10, 2)
                                         elif name == away:
-                                            b365_dict["1x2_2"] = price
-                                            b365_dict["dc_x2"] = round(price * 1.15, 2)
+                                            pin_dict["1x2_2"] = price
+                                            pin_dict["dc_x2"] = round(price * 1.15, 2)
                                         elif "draw" in name.lower() or "pareggio" in name.lower():
-                                            b365_dict["1x2_X"] = price
+                                            pin_dict["1x2_X"] = price
                                             
                                 elif m_key == "draw_no_bet":
                                     for outcome in outcomes:
                                         name = outcome.get("name")
                                         price = outcome.get("price")
                                         if name == home:
-                                            b365_dict["dnb_1"] = price
+                                            pin_dict["dnb_1"] = price
                                         elif name == away:
-                                            b365_dict["dnb_2"] = price
+                                            pin_dict["dnb_2"] = price
 
                                 elif m_key == "btts":
                                     for outcome in outcomes:
                                         name = outcome.get("name", "").lower()
                                         price = outcome.get("price")
                                         if "yes" in name or "sì" in name or "si" in name:
-                                            b365_dict["btts_yes"] = price
+                                            pin_dict["btts_yes"] = price
                                         elif "no" in name:
-                                            b365_dict["btts_no"] = price
+                                            pin_dict["btts_no"] = price
 
                                 elif m_key == "totals":
                                     for outcome in outcomes:
@@ -460,24 +461,24 @@ def scan_bet365_value_bets(target_date_str="Oggi", league_type="top", target_dif
                                         if point in [0.5, 1.5, 2.5, 3.5, 4.5]:
                                             l_str = str(point).replace('.', '')
                                             if "over" in name:
-                                                b365_dict[f"over_{l_str}"] = price
+                                                pin_dict[f"over_{l_str}"] = price
                                             elif "under" in name:
-                                                b365_dict[f"under_{l_str}"] = price
+                                                pin_dict[f"under_{l_str}"] = price
 
-                    if "1x2_1" in b365_dict and "1x2_X" in b365_dict and "dc_1x" not in b365_dict:
-                        b365_dict["dc_1x"] = round(1 / ((1 / b365_dict["1x2_1"]) + (1 / b365_dict["1x2_X"])), 2)
-                    if "1x2_2" in b365_dict and "1x2_X" in b365_dict and "dc_x2" not in b365_dict:
-                        b365_dict["dc_x2"] = round(1 / ((1 / b365_dict["1x2_2"]) + (1 / b365_dict["1x2_X"])), 2)
-                    if "1x2_1" in b365_dict and "1x2_2" in b365_dict and "dc_12" not in b365_dict:
-                        b365_dict["dc_12"] = round(1 / ((1 / b365_dict["1x2_1"]) + (1 / b365_dict["1x2_2"])), 2)
+                    if "1x2_1" in pin_dict and "1x2_X" in pin_dict and "dc_1x" not in pin_dict:
+                        pin_dict["dc_1x"] = round(1 / ((1 / pin_dict["1x2_1"]) + (1 / pin_dict["1x2_X"])), 2)
+                    if "1x2_2" in pin_dict and "1x2_X" in pin_dict and "dc_x2" not in pin_dict:
+                        pin_dict["dc_x2"] = round(1 / ((1 / pin_dict["1x2_2"]) + (1 / pin_dict["1x2_X"])), 2)
+                    if "1x2_1" in pin_dict and "1x2_2" in pin_dict and "dc_12" not in pin_dict:
+                        pin_dict["dc_12"] = round(1 / ((1 / pin_dict["1x2_1"]) + (1 / pin_dict["1x2_2"])), 2)
 
                     if home and away:
-                        match_candidates = analyze_match_comprehensive(home, away, campionato, b365_dict, target_diff)
+                        match_candidates = analyze_match_comprehensive(home, away, campionato, pin_dict, target_diff)
                         for mc in match_candidates:
                             mc["data_ora"] = data_ora_str
                             all_found_bets.append(mc)
         except Exception as e:
-            print(f"❌ Errore scansione Bet365 API: {e}")
+            print(f"❌ Errore scansione Pinnacle API: {e}")
 
     all_found_bets.sort(key=lambda x: x["value_rate"], reverse=True)
     return all_found_bets[:30]
@@ -497,14 +498,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["awaiting_bankroll"] = False
 
     keyboard = [
-        [InlineKeyboardButton("🔍 Scansiona Value Bets (Bet365)", callback_data="select_date")],
+        [InlineKeyboardButton("🔍 Scansiona Value Bets (Pinnacle)", callback_data="select_date")],
         [InlineKeyboardButton("💰 Bankroll & Gestione Capitale", callback_data="manage_bankroll")],
         [InlineKeyboardButton("📊 Le mie Bet Salvate", callback_data="view_bets")]
     ]
     welcome_msg = (
-        "🤖 **Bet365 AI Value Bot (Multi-Mercato & Reale)**\n\n"
+        "🤖 **Pinnacle AI Value Bot (Multi-Mercato & Sharp)**\n\n"
         f"💵 **Bankroll Attuale:** `{cap_att:.2f}€` (Iniziale: `{cap_init:.2f}€`)\n\n"
-        "Seleziona una funzione per scansionare le quote reali di Bet365:"
+        "Seleziona una funzione per scansionare le quote reali di Pinnacle:"
     )
     if update.message:
         await update.message.reply_text(welcome_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
@@ -564,22 +565,22 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         diff_names = {"easy": "Facile", "medium": "Media", "hard": "Difficile", "all": "Tutte"}
         diff_label = diff_names.get(target_diff, "Tutte")
 
-        await safe_edit_message(query, f"🔍 **Scansione quote reali Bet365 in corso (`{chosen_date}` | Filtro: `{diff_label}`). Attendere...**")
+        await safe_edit_message(query, f"🔍 **Scansione quote reali Pinnacle in corso (`{chosen_date}` | Filtro: `{diff_label}`). Attendere...**")
 
-        value_bets = scan_bet365_value_bets(chosen_date, league_type, target_diff)
+        value_bets = scan_pinnacle_value_bets(chosen_date, league_type, target_diff)
         context.user_data["cached_value_bets"] = value_bets
 
         if not value_bets:
             keyboard = [[InlineKeyboardButton("🔙 Cambia Filtri", callback_data="select_date")]]
-            await safe_edit_message(query, f"❌ Nessuna giocata trovata con quote reali Bet365 per i criteri selezionati (`{chosen_date}` - `{diff_label}`). Prova a selezionare 'Tutte le Probabilità'.", reply_markup=InlineKeyboardMarkup(keyboard))
+            await safe_edit_message(query, f"❌ Nessuna giocata trovata con quote reali Pinnacle per i criteri selezionati (`{chosen_date}` - `{diff_label}`). Prova a selezionare 'Tutte le Probabilità'.", reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
         msg = f"🎯 **VALUE BETS TROVATE ({len(value_bets)} opzioni):**\nSeleziona una partita per vedere cosa giocare:"
         keyboard = []
         for i, vb in enumerate(value_bets[:12]):
-            btn_text = f"{vb['diff_label']} | {vb['partita']} -> {vb['pick']} (@{vb['quota_bet365']})"
+            btn_text = f"{vb['diff_label']} | {vb['partita']} -> {vb['pick']} (@{vb['quota_pinnacle']})"
             if len(btn_text) > 60:
-                btn_text = f"{vb['partita']} | {vb['pick']} (@{vb['quota_bet365']})"
+                btn_text = f"{vb['partita']} | {vb['pick']} (@{vb['quota_pinnacle']})"
             keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"vb_idx_{i}")])
 
         keyboard.append([InlineKeyboardButton("🔙 Cambia Filtri", callback_data="select_date")])
@@ -597,7 +598,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         user_id = query.from_user.id
         cap_init, cap_att = get_user_bankroll(user_id)
-        b = vb["quota_bet365"] - 1.0
+        b = vb["quota_pinnacle"] - 1.0
         prob_dec = vb["probabilita"] / 100.0
 
         kelly_raw = ((b * prob_dec - (1 - prob_dec)) / b) / vb["kelly_divisor"] if b > 0 else 0
@@ -610,14 +611,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["pending_bet_to_save"] = vb
 
         msg = (
-            f"🚀 **GUIDA ALLA GIOCATA SU BET365**\n\n"
+            f"🚀 **GUIDA ALLA GIOCATA SU PINNACLE**\n\n"
             f"📌 **Livello Probabilità:** `{vb['diff_label']}` (Prob: `{vb['probabilita']}%`)\n"
             f"🏆 **Campionato:** `{vb['campionato']}`\n"
             f"🏟 **Match:** `{vb['partita']}`\n"
             f"📅 **Data e Ora:** `{vb['data_ora']}`\n\n"
-            f"🗂 **Sezione su Bet365:** `{vb['categoria']}`\n"
+            f"🗂 **Sezione su Pinnacle:** `{vb['categoria']}`\n"
             f"🎯 **COSA CLICCARE:** `{vb['instruction']}`\n"
-            f"🟢 **Quota Reale Bet365:** `@`**`{vb['quota_bet365']}`**\n"
+            f"🟢 **Quota Reale Pinnacle:** `@`**`{vb['quota_pinnacle']}`**\n"
             f"⚖️ **Quota Fair (Modello):** `{vb['quota_fair']}`\n"
             f"📈 **Value Rate:** `+{vb['value_rate_pct']}%`\n\n"
             f"💡 **BANKROLL & STAKE CONSIGLIATO:**\n"
@@ -643,12 +644,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id=user_id,
             partita=vb["partita"],
             pronostico=vb["pick"],
-            quota=vb["quota_bet365"],
+            quota=vb["quota_pinnacle"],
             probabilita=vb["probabilita"],
             value_rate=vb["value_rate"],
             stake_euro=vb["stake_euro"]
         )
-        msg = f"✅ **Giocata salvata con successo nel tuo Bankroll!**\n\n📌 {vb['partita']} -> {vb['pick']} (@{vb['quota_bet365']})\nStake: `{vb['stake_euro']:.2f}€`"
+        msg = f"✅ **Giocata salvata con successo nel tuo Bankroll!**\n\n📌 {vb['partita']} -> {vb['pick']} (@{vb['quota_pinnacle']})\nStake: `{vb['stake_euro']:.2f}€`"
         keyboard = [[InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -788,7 +789,7 @@ def main():
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🤖 Bot Telegram avviato correttamente...")
+    print("🤖 Bot Telegram avviato correttamente con Pinnacle...")
     application.run_polling()
 
 if __name__ == "__main__":
