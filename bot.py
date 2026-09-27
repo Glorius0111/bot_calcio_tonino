@@ -42,20 +42,20 @@ threading.Thread(target=run_dummy_server, daemon=True).start()
 TOKEN = "8578449373:AAFYwnue4sMXjed_P-Bh6_k4yl8jQp3lgr8"
 ODDS_API_KEY = "086d307e367ca83263380e3b4d78147f"
 
-LEAGUE_GOALS_DATABASE = {
-    "serie a": 2.55, "serie b": 2.45,
-    "premier league": 2.85, "championship": 2.60,
-    "la liga": 2.50, "bundesliga": 3.15, "ligue 1": 2.60,
-    "eredivisie": 3.05, "liga portugal": 2.55,
-    "champions league": 2.95, "europa league": 2.75, "mls": 2.90,
-    "default": 2.70
+LEAGUE_CORNER_DATABASE = {
+    "serie a": 9.5, "serie b": 9.8,
+    "premier league": 10.4, "championship": 10.6,
+    "la liga": 9.2, "bundesliga": 9.9, "ligue 1": 9.3,
+    "eredivisie": 10.2, "liga portugal": 9.7,
+    "champions league": 9.7, "europa league": 9.6, "mls": 9.9,
+    "default": 9.6
 }
 
-TEAM_GOALS_STATS = {
-    "inter": (2.1, 0.7, 1.8, 0.9), "milan": (1.8, 1.1, 1.5, 1.2), "atalanta": (2.0, 1.2, 1.7, 1.3),
-    "juventus": (1.7, 0.8, 1.4, 0.9), "roma": (1.7, 1.1, 1.4, 1.2), "napoli": (1.9, 0.9, 1.6, 1.0),
-    "arsenal": (2.2, 0.8, 1.9, 0.9), "manchester city": (2.5, 0.7, 2.1, 0.8), "liverpool": (2.3, 0.9, 2.0, 1.0),
-    "real madrid": (2.3, 0.8, 2.0, 0.9), "barcelona": (2.4, 0.9, 2.1, 1.0), "bayern munich": (2.7, 1.0, 2.3, 1.1)
+TEAM_CORNER_STATS = {
+    "inter": (6.8, 3.2, 5.8, 3.8), "milan": (5.9, 4.1, 5.2, 4.5), "atalanta": (6.5, 3.5, 5.5, 4.2),
+    "juventus": (5.2, 3.8, 4.8, 4.1), "roma": (5.8, 3.9, 4.9, 4.6), "napoli": (6.1, 3.4, 5.1, 4.0),
+    "arsenal": (7.2, 3.1, 6.1, 4.0), "manchester city": (7.8, 2.8, 6.9, 3.5), "liverpool": (7.0, 3.5, 6.2, 4.1),
+    "real madrid": (6.9, 3.0, 5.9, 3.7), "barcelona": (6.6, 3.2, 5.8, 3.9), "bayern munich": (7.4, 2.9, 6.5, 3.4)
 }
 
 SPORT_KEY_MAP = {
@@ -117,119 +117,104 @@ def clean_league_name(raw_name, sport_key=""):
 def poisson_probability(k, exp_lambda):
     return ((exp_lambda ** k) * math.exp(-exp_lambda)) / math.factorial(k)
 
-def resolve_team_goals_metrics(team_name, is_home, league_avg_goals):
+def calculate_over_probability(exp_lambda, line):
+    prob_under_or_equal = 0.0
+    for k in range(int(line) + 1):
+        prob_under_or_equal += poisson_probability(k, exp_lambda)
+    return max(0.01, min(0.99, 1.0 - prob_under_or_equal))
+
+def resolve_team_metrics(team_name, is_home, league_avg):
     t_key = team_name.lower().strip()
-    for known_team, stats in TEAM_GOALS_STATS.items():
+    for known_team, stats in TEAM_CORNER_STATS.items():
         if known_team in t_key:
             return (stats[0], stats[1]) if is_home else (stats[2], stats[3])
-    half_league = league_avg_goals / 2.0
+    half_league = league_avg / 2.0
     if is_home:
-        for_stat = round(half_league * random.uniform(1.02, 1.15), 2)
-        against_stat = round(half_league * random.uniform(0.85, 0.98), 2)
+        for_stat = round(half_league * random.uniform(1.05, 1.18), 1)
+        against_stat = round(half_league * random.uniform(0.85, 0.98), 1)
     else:
-        for_stat = round(half_league * random.uniform(0.82, 0.96), 2)
-        against_stat = round(half_league * random.uniform(1.02, 1.15), 2)
+        for_stat = round(half_league * random.uniform(0.85, 0.98), 1)
+        against_stat = round(half_league * random.uniform(1.02, 1.15), 1)
     return for_stat, against_stat
 
-def analyze_match_comprehensive(home_team, away_team, campionato, bet365_odds_dict):
+def analyze_any_match_corners(home_team, away_team, campionato, difficulty):
     camp_key = campionato.lower().strip() if campionato else "default"
-    league_mean = 2.70
-    for key, avg in LEAGUE_GOALS_DATABASE.items():
+    league_mean = 9.6
+    for key, avg in LEAGUE_CORNER_DATABASE.items():
         if key in camp_key:
             league_mean = avg
             break
 
     half_league = league_mean / 2.0
-    home_scored, home_conceded = resolve_team_goals_metrics(home_team, is_home=True, league_avg_goals=league_mean)
-    away_scored, away_conceded = resolve_team_goals_metrics(away_team, is_home=False, league_avg_goals=league_mean)
+    home_for, home_against = resolve_team_metrics(home_team, is_home=True, league_avg=league_mean)
+    away_for, away_against = resolve_team_metrics(away_team, is_home=False, league_avg=league_mean)
+    exp_home_corners = (home_for * away_against) / half_league
+    exp_away_corners = (away_for * home_against) / half_league
+    total_exp_corners = exp_home_corners + exp_away_corners
 
-    exp_home_goals = (home_scored * away_conceded) / half_league
-    exp_away_goals = (away_scored * home_conceded) / half_league
-    total_exp_goals = exp_home_goals + exp_away_goals
+    if difficulty == "easy":
+        diff_label = "🟢 FACILE (Basso Rischio)"
+        kelly_divisor = 2.0
+        kelly_text = "1/2 Kelly"
+        candidate_lines = [
+            {"cat": "🚩 Corner Totali", "pick": "Over 6.5 Corner Totali", "type": "total", "line": 6.5},
+            {"cat": "🚩 Corner Totali", "pick": "Over 7.5 Corner Totali", "type": "total", "line": 7.5},
+            {"cat": "🚩 Corner Casa", "pick": f"{home_team} Over 3.5 Corner", "type": "home", "line": 3.5}
+        ]
+    elif difficulty == "medium":
+        diff_label = "🟡 MEDIO (Rischio Bilanciato)"
+        kelly_divisor = 4.0
+        kelly_text = "1/4 Kelly"
+        candidate_lines = [
+            {"cat": "🚩 Corner Totali", "pick": "Over 8.5 Corner Totali", "type": "total", "line": 8.5},
+            {"cat": "🚩 Corner Totali", "pick": "Over 9.5 Corner Totali", "type": "total", "line": 9.5},
+            {"cat": "🚩 Corner Casa", "pick": f"{home_team} Over 4.5 Corner", "type": "home", "line": 4.5}
+        ]
+    else:
+        diff_label = "🔴 DIFFICILE (Alta Quota / Max EV+)"
+        kelly_divisor = 8.0
+        kelly_text = "1/8 Kelly"
+        candidate_lines = [
+            {"cat": "🚩 Corner Totali", "pick": "Over 10.5 Corner Totali", "type": "total", "line": 10.5},
+            {"cat": "🚩 Corner Casa", "pick": f"{home_team} Over 5.5 Corner", "type": "home", "line": 5.5},
+            {"cat": "🚩 Corner Ospiti", "pick": f"{away_team} Over 4.5 Corner", "type": "away", "line": 4.5}
+        ]
 
-    # Calcolo probabilità con Poisson su matrice esiti (fino a 6 gol)
-    max_goals = 6
-    matrix = [[0.0] * (max_goals + 1) for _ in range(max_goals + 1)]
-    
-    prob_home_win = 0.0
-    prob_draw = 0.0
-    prob_away_win = 0.0
-    prob_over_25 = 0.0
-    prob_btts_yes = 0.0
+    best_option = None
+    best_prob = 0.0
 
-    for i in range(max_goals + 1):
-        for j in range(max_goals + 1):
-            p = poisson_probability(i, exp_home_goals) * poisson_probability(j, exp_away_goals)
-            matrix[i][j] = p
-            if i > j:
-                prob_home_win += p
-            elif i == j:
-                prob_draw += p
-            else:
-                prob_away_win += p
-            
-            if (i + j) > 2.5:
-                prob_over_25 += p
+    for option in candidate_lines:
+        if option["type"] == "total":
+            prob = calculate_over_probability(total_exp_corners, option["line"])
+        elif option["type"] == "home":
+            prob = calculate_over_probability(exp_home_corners, option["line"])
+        else:
+            prob = calculate_over_probability(exp_away_corners, option["line"])
 
-    prob_under_25 = 1.0 - prob_over_25
-    p_home_zero = sum(matrix[0][j] for j in range(max_goals + 1))
-    p_away_zero = sum(matrix[i][0] for i in range(max_goals + 1))
-    prob_btts_yes = (1.0 - p_home_zero) * (1.0 - p_away_zero)
-    prob_btts_no = 1.0 - prob_btts_yes
+        if prob > best_prob:
+            best_prob = prob
+            best_option = option
 
-    # Candidati di mercati analizzati
-    candidates = [
-        {"cat": "🏆 Segno 1X2", "pick": f"1 ({home_team} Vincente)", "type": "1x2_1", "prob": prob_home_win, "diff": "medium", "kelly": 4.0, "kelly_text": "1/4 Kelly"},
-        {"cat": "🏆 Segno 1X2", "pick": "X (Pareggio)", "type": "1x2_X", "prob": prob_draw, "diff": "hard", "kelly": 8.0, "kelly_text": "1/8 Kelly"},
-        {"cat": "🏆 Segno 1X2", "pick": f"2 ({away_team} Vincente)", "type": "1x2_2", "prob": prob_away_win, "diff": "medium", "kelly": 4.0, "kelly_text": "1/4 Kelly"},
-        {"cat": "⚽ Goal Totali", "pick": "Over 2.5 Goal", "type": "over_25", "prob": prob_over_25, "diff": "easy", "kelly": 2.0, "kelly_text": "1/2 Kelly"},
-        {"cat": "⚽ Goal Totali", "pick": "Under 2.5 Goal", "type": "under_25", "prob": prob_under_25, "diff": "medium", "kelly": 4.0, "kelly_text": "1/4 Kelly"},
-        {"cat": "🥅 Entrambe a Segno", "pick": "Goal / Goal (BTTS Sì)", "type": "btts_yes", "prob": prob_btts_yes, "diff": "easy", "kelly": 2.0, "kelly_text": "1/2 Kelly"},
-        {"cat": "🥅 Entrambe a Segno", "pick": "No Goal (BTTS No)", "type": "btts_no", "prob": prob_btts_no, "diff": "medium", "kelly": 4.0, "kelly_text": "1/4 Kelly"}
-    ]
+    prob_pct = round(best_prob * 100, 1)
+    quota_fair = round(1.0 / best_prob, 2)
 
-    best_value_bet = None
-    max_value_rate = -999.0
+    camp_stat_label = f"`{campionato}`" if campionato else "Standard"
+    analysis_text = (
+        f"• **Expected Corners (xC):** `{total_exp_corners:.2f}` attesi totali (`{exp_home_corners:.2f}` {home_team} - `{exp_away_corners:.2f}` {away_team}).\n"
+        f"• **Media Torneo ({camp_stat_label}):** `{league_mean}` corner medi/partita.\n"
+        f"• **Metrica Attacco/Difesa:** `{home_team}` (`{home_for:.1f}` f. / `{home_against:.1f}` s.) vs `{away_team}` (`{away_for:.1f}` f. / `{away_against:.1f}` s.)."
+    )
 
-    for cand in candidates:
-        prob = max(0.01, min(0.99, cand["prob"]))
-        fair_odd = 1.0 / prob
-
-        # Recupera quota Bet365 o stima un valore di mercato verosimile
-        b365_odd = bet365_odds_dict.get(cand["type"])
-        if not b365_odd:
-            b365_odd = round(fair_odd * random.uniform(0.96, 1.14), 2)
-            if b365_odd < 1.25:
-                b365_odd = round(fair_odd * 1.06, 2)
-
-        value_rate = (b365_odd * prob) - 1.0
-
-        if value_rate > max_value_rate:
-            max_value_rate = value_rate
-            analysis_text = (
-                f"• **Expected Goals (xG):** `{total_exp_goals:.2f}` attesi totali (`{exp_home_goals:.2f}` {home_team} - `{exp_away_goals:.2f} {away_team}`).\n"
-                f"• **Media Torneo:** `{league_mean}` gol/partita.\n"
-                f"• **Forza Offensiva/Difensiva:** `{home_team}` (`{home_scored:.2f}` f. / `{home_conceded:.2f}` s.) vs `{away_team}` (`{away_scored:.2f}` f. / `{away_conceded:.2f}` s.).\n"
-                f"• **Probabilità Poisson:** `{round(prob * 100, 1)}%` (Quota Fair: `{round(fair_odd, 2)}`)."
-            )
-
-            best_value_bet = {
-                "partita": f"{home_team} vs {away_team}",
-                "campionato": campionato,
-                "categoria": cand["cat"],
-                "pick": cand["pick"],
-                "probabilita": round(prob * 100, 1),
-                "quota_fair": round(fair_odd, 2),
-                "quota_bet365": b365_odd,
-                "value_rate": value_rate,
-                "value_rate_pct": round(value_rate * 100, 1),
-                "kelly_divisor": cand["kelly"],
-                "kelly_text": cand["kelly_text"],
-                "diff_label": f"🟢 {cand['diff'].upper()} (Bet365 Value)",
-                "analysis": analysis_text
-            }
-
-    return best_value_bet if max_value_rate > -0.03 else None
+    return {
+        "diff_label": diff_label,
+        "kelly_divisor": kelly_divisor,
+        "kelly_text": kelly_text,
+        "categoria": best_option["cat"],
+        "pick": best_option["pick"],
+        "probabilita": prob_pct,
+        "quota_fair": quota_fair,
+        "analysis": analysis_text
+    }
 
 def init_db():
     conn = sqlite3.connect("value_bets.db")
@@ -256,6 +241,11 @@ def init_db():
             capitale_attuale REAL DEFAULT 100.0
         )
     ''')
+    cursor.execute("PRAGMA table_info(saved_bets)")
+    columns = [column[1] for column in cursor.fetchall()]
+    if "stake_euro" not in columns:
+        cursor.execute("ALTER TABLE saved_bets ADD COLUMN stake_euro REAL DEFAULT 0.0")
+
     conn.commit()
     conn.close()
 
@@ -319,7 +309,7 @@ def update_bet_result(bet_id, user_id, esito):
         conn.commit()
     conn.close()
 
-def scan_bet365_value_bets(target_date_str="Oggi", league_type="top"):
+def get_filtered_soccer_matches(target_date_str="Oggi", league_type="top"):
     tz_it = pytz.timezone("Europe/Rome")
     now_it = datetime.now(tz_it)
     today_str = now_it.strftime("%d/%m/%Y")
@@ -332,7 +322,7 @@ def scan_bet365_value_bets(target_date_str="Oggi", league_type="top"):
     else:
         filter_date = "ALL"
 
-    value_bets = []
+    matches = []
     if ODDS_API_KEY:
         try:
             sports_url = f"https://api.the-odds-api.com/v4/sports?apiKey={ODDS_API_KEY}"
@@ -349,16 +339,19 @@ def scan_bet365_value_bets(target_date_str="Oggi", league_type="top"):
                     "soccer_uefa_champions_league", "soccer_usa_mls"
                 ]
                 
-                selected_keys = [k for k in top_keys if k in soccer_sports] if league_type == "top" else soccer_sports[:12]
-                if not selected_keys:
-                    selected_keys = soccer_sports[:5]
-
+                if league_type == "top":
+                    selected_keys = [k for k in top_keys if k in soccer_sports]
+                    if not selected_keys:
+                        selected_keys = soccer_sports[:5]
+                else:
+                    selected_keys = soccer_sports[:15]
+                
                 for sport_key in selected_keys:
-                    odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={ODDS_API_KEY}&regions=eu&bookmakers=bet365&markets=h2h,totals"
-                    odds_resp = requests.get(odds_url, timeout=5)
+                    events_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/events?apiKey={ODDS_API_KEY}"
+                    ev_resp = requests.get(events_url, timeout=4)
                     
-                    if odds_resp.status_code == 200:
-                        events = odds_resp.json()
+                    if ev_resp.status_code == 200:
+                        events = ev_resp.json()
                         for ev in events:
                             home = ev.get("home_team")
                             away = ev.get("away_team")
@@ -378,42 +371,20 @@ def scan_bet365_value_bets(target_date_str="Oggi", league_type="top"):
                             if filter_date != "ALL" and match_date_str != filter_date:
                                 continue
 
-                            # Estrazione dizionario quote Bet365
-                            b365_dict = {}
-                            for bm in ev.get("bookmakers", []):
-                                if bm.get("key") == "bet365":
-                                    for market in bm.get("markets", []):
-                                        m_key = market.get("key")
-                                        if m_key == "h2h":
-                                            for outcome in market.get("outcomes", []):
-                                                name = outcome.get("name")
-                                                price = outcome.get("price")
-                                                if name == home:
-                                                    b365_dict["1x2_1"] = price
-                                                elif name == away:
-                                                    b365_dict["1x2_2"] = price
-                                                elif "draw" in name.lower() or "pareggio" in name.lower():
-                                                    b365_dict["1x2_X"] = price
-                                        elif m_key == "totals":
-                                            for outcome in market.get("outcomes", []):
-                                                name = outcome.get("name")
-                                                point = outcome.get("point")
-                                                price = outcome.get("price")
-                                                if point == 2.5:
-                                                    if "over" in name.lower():
-                                                        b365_dict["over_25"] = price
-                                                    elif "under" in name.lower():
-                                                        b365_dict["under_25"] = price
-
-                            if home and away:
-                                v_bet = analyze_match_comprehensive(home, away, campionato, b365_dict)
-                                if v_bet:
-                                    v_bet["data_ora"] = data_ora_str
-                                    value_bets.append(v_bet)
+                            match_obj = {
+                                "home": home,
+                                "away": away,
+                                "campionato": campionato,
+                                "data_ora": data_ora_str,
+                                "match_date": match_date_str
+                            }
+                            if home and away and match_obj not in matches:
+                                matches.append(match_obj)
         except Exception as e:
-            print(f"Errore scansione Bet365 API: {e}")
+            print(f"Errore The Odds API events: {e}")
 
-    return value_bets
+    # RESTITUISCE ESCLUSIVAMENTE MATCH REALI (NESSUN FALLBACK FITTIZIO)
+    return matches
 
 async def safe_edit_message(query, text, reply_markup=None, parse_mode="Markdown"):
     try:
@@ -427,17 +398,18 @@ async def safe_edit_message(query, text, reply_markup=None, parse_mode="Markdown
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     cap_init, cap_att = get_user_bankroll(user_id)
+    context.user_data["awaiting_odds"] = False
     context.user_data["awaiting_bankroll"] = False
 
     keyboard = [
-        [InlineKeyboardButton("🔍 Scansiona Value Bets Bet365 (Tutti i Mercati)", callback_data="select_date")],
+        [InlineKeyboardButton("🚩 Trova Miglior EV+ (Scegli Data & Campionato)", callback_data="select_date")],
         [InlineKeyboardButton("💰 Bankroll & Gestione Capitale", callback_data="manage_bankroll")],
         [InlineKeyboardButton("📊 Le mie Bet Salvate", callback_data="view_bets")]
     ]
     welcome_msg = (
-        "🤖 **Bet365 Comprehensive AI Value Bot**\n\n"
+        "🤖 **Corner EV+ Real Analyzer**\n\n"
         f"💵 **Bankroll Attuale:** `{cap_att:.2f}€` (Iniziale: `{cap_init:.2f}€`)\n\n"
-        "Scansiona tutti i mercati (1X2, Over/Under 2.5, BTTS) sulle quote reali di **Bet365**, calcola la probabilità Poisson e individua le Value Bets con analisi completa:"
+        "Seleziona un'opzione per analizzare i match reali in palinsesto:"
     )
     if update.message:
         await update.message.reply_text(welcome_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
@@ -449,7 +421,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if query.data == "select_date":
-        msg = "📅 **SELEZIONA LA DATA PER LA SCANSIONE COMPLETA:**"
+        msg = "📅 **SELEZIONA LA DATA DELLE PARTITE:**"
         keyboard = [
             [InlineKeyboardButton("📅 Oggi", callback_data="date_Oggi")],
             [InlineKeyboardButton("📅 Domani", callback_data="date_Domani")],
@@ -465,78 +437,104 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = f"🏆 **DATA SELEZIONATA:** `{chosen_date}`\n\nScegli il filtro per i campionati:"
         keyboard = [
             [InlineKeyboardButton("🏆 Solo Campionati Top (Serie A, Premier, CL, ecc.)", callback_data="league_top")],
-            [InlineKeyboardButton("🌍 Tutti i Campionati Disponibili", callback_data="league_all")],
+            [InlineKeyboardButton("🌍 Tutti i Campionati del Giorno", callback_data="league_all")],
             [InlineKeyboardButton("🔙 Indietro", callback_data="select_date")]
         ]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data.startswith("league_"):
         league_type = query.data.split("_")[1]
+        context.user_data["league_type"] = league_type
         chosen_date = context.user_data.get("chosen_date", "Oggi")
 
-        await safe_edit_message(query, f"🔍 **Scansione Bet365 in corso per `{chosen_date}` (Tutti i mercati)...** Attendere prego.")
+        matches = get_filtered_soccer_matches(chosen_date, league_type)
+        context.user_data["cached_matches"] = matches
 
-        value_bets = scan_bet365_value_bets(chosen_date, league_type)
-        context.user_data["cached_value_bets"] = value_bets
-
-        if not value_bets:
+        if not matches:
             keyboard = [[InlineKeyboardButton("🔙 Cambia Filtri", callback_data="select_date")]]
-            await safe_edit_message(query, f"❌ Nessuna Value Bet trovata su Bet365 per la data `{chosen_date}` al momento.", reply_markup=InlineKeyboardMarkup(keyboard))
+            await safe_edit_message(query, f"❌ Nessuna partita reale trovata per la data `{chosen_date}` con i filtri selezionati.", reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
-        msg = f"🎯 **VALUE BETS TROVATE ({len(value_bets)} match):**\nSeleziona una partita per visualizzare l'analisi completa e calcolare lo Stake Kelly:"
+        msg = f"⚽ **PARTITE REALI TROVATE ({len(matches)} match):**\nScegli un match dalla lista o estrai a caso:"
         keyboard = []
-        for i, vb in enumerate(value_bets[:10]):
-            btn_text = f"🔥 {vb['partita']} | {vb['pick']} @{vb['quota_bet365']}"
+        for i, m in enumerate(matches[:15]): # Mostra fino a 15 partite reali
+            btn_text = f"{m['campionato']} | {m['home']} vs {m['away']}"
             if len(btn_text) > 60:
-                btn_text = f"{vb['partita']} ({vb['value_rate_pct']:+.1f}%)"
-            keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"vb_idx_{i}")])
+                btn_text = f"{m['home']} vs {m['away']}"
+            keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"match_idx_{i}")])
 
+        keyboard.append([InlineKeyboardButton("🎲 Estrai Match Casuale da questa lista", callback_data="match_random_filtered")])
         keyboard.append([InlineKeyboardButton("🔙 Cambia Filtri", callback_data="select_date")])
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif query.data.startswith("vb_idx_"):
-        idx = int(query.data.split("_")[2])
-        value_bets = context.user_data.get("cached_value_bets", [])
-        if not value_bets or idx >= len(value_bets):
-            await query.message.reply_text("❌ Sessione scaduta. Avvia una nuova scansione.")
+    elif query.data.startswith("match_idx_") or query.data == "match_random_filtered":
+        matches = context.user_data.get("cached_matches", [])
+        if not matches:
+            matches = get_filtered_soccer_matches("Oggi", "top")
+
+        if not matches:
+            keyboard = [[InlineKeyboardButton("🔙 Cambia Filtri", callback_data="select_date")]]
+            await safe_edit_message(query, "❌ Nessuna partita disponibile in memoria. Riprova.", reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
-        vb = value_bets[idx]
-        context.user_data["selected_vb"] = vb
+        if query.data == "match_random_filtered":
+            match = random.choice(matches)
+        else:
+            idx = int(query.data.split("_")[2])
+            match = matches[idx]
 
-        user_id = query.from_user.id
-        cap_init, cap_att = get_user_bankroll(user_id)
-        b = vb["quota_bet365"] - 1.0
-        prob_dec = vb["probabilita"] / 100.0
+        context.user_data["selected_match"] = match
 
-        kelly_raw = ((b * prob_dec - (1 - prob_dec)) / b) / vb["kelly_divisor"] if b > 0 else 0
-        stake_pct_calc = max(0.0, min(kelly_raw * 100, 10.0))
-        calculated_stake = (cap_att * stake_pct_calc) / 100.0
-        stake_euro = max(1.0, calculated_stake) if calculated_stake < 1.0 else calculated_stake
-        stake_pct = (stake_euro / cap_att) * 100.0 if cap_att > 0 else 1.0
-
-        vb["stake_euro"] = stake_euro
-        context.user_data["pending_bet_to_save"] = vb
-
+        camp_line = f"🏆 **Campionato:** `{match['campionato']}`\n" if match.get("campionato") else ""
         msg = (
-            f"🚀 **ANALISI COMPLETA & VALUE BET BET365**\n\n"
-            f"📌 **Profilo:** `{vb['diff_label']}`\n"
-            f"🏆 **Campionato:** `{vb['campionato']}`\n"
-            f"🏟 **Match:** `{vb['partita']}`\n"
-            f"📅 **Data e Ora:** `{vb['data_ora']}`\n\n"
-            f"📌 **Mercato:** `{vb['categoria']}`\n"
-            f"💡 **Pick Consigliato:** `{vb['pick']}`\n\n"
-            f"📊 **Probabilità Poisson:** `{vb['probabilita']}%`\n"
-            f"⚖️ **Quota Fair:** `{vb['quota_fair']}` | 🟢 **Quota Bet365:** `{vb['quota_bet365']}` (EV+ `{vb['value_rate_pct']:+.2f}%`)\n\n"
-            f"📋 **Analisi Statistica Dettagliata:**\n{vb['analysis']}\n\n"
-            f"💰 **Stake Consigliato ({vb['kelly_text']}):** `{stake_pct:.1f}% cassa` (`{stake_euro:.2f}€`)\n\n"
-            f"❓ **Vuoi registrare questa giocata nella tua cassa?**"
+            f"{camp_line}"
+            f"🏟 **Partita:** `{match['home']} vs {match['away']}`\n"
+            f"📅 **Data e Ora:** `{match['data_ora']}`\n\n"
+            f"🎯 **Scegli il livello di rischio per l'analisi:**\n"
+            f"• 🟢 **Facile** ➔ Stake fisso **1/2 Kelly**\n"
+            f"• 🟡 **Medio** ➔ Stake fisso **1/4 Kelly**\n"
+            f"• 🔴 **Difficile** ➔ Stake fisso **1/8 Kelly**"
         )
         keyboard = [
-            [InlineKeyboardButton("✅ GIOCATA (Salva in Cassa)", callback_data="confirm_play_bet")],
-            [InlineKeyboardButton("❌ NON GIOCATA (Annulla)", callback_data="cancel_play_bet")],
-            [InlineKeyboardButton("🔙 Torna alla Lista", callback_data="select_date")]
+            [InlineKeyboardButton("🟢 FACILE (1/2 Kelly)", callback_data="diff_easy")],
+            [InlineKeyboardButton("🟡 MEDIO (1/4 Kelly)", callback_data="diff_medium")],
+            [InlineKeyboardButton("🔴 DIFFICILE (1/8 Kelly)", callback_data="diff_hard")],
+            [InlineKeyboardButton("🎲 QUALSIASI (Pick Casuale)", callback_data="diff_any")],
+            [InlineKeyboardButton("🔄 Scegli un'altra Partita", callback_data=f"league_{context.user_data.get('league_type', 'top')}"),
+             InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
+        ]
+        await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif query.data.startswith("diff_"):
+        difficulty = query.data.split("_")[1]
+        if difficulty == "any":
+            difficulty = random.choice(["easy", "medium", "hard"])
+        match = context.user_data.get("selected_match")
+        if not match:
+            await query.message.reply_text("❌ Sessione scaduta. Seleziona nuovamente una partita.")
+            return
+
+        pred = analyze_any_match_corners(match["home"], match["away"], match["campionato"], difficulty)
+        context.user_data["current_pred"] = {**pred, "partita": f"{match['home']} vs {match['away']}"}
+        context.user_data["awaiting_odds"] = True
+
+        camp_line = f"🏆 **Campionato:** `{match['campionato']}`\n" if match.get("campionato") else ""
+        msg = (
+            f"🚀 **VALUE BET CORNER IDENTIFICATA (POISSON MODEL)**\n"
+            f"📌 **Profilo:** `{pred['diff_label']}` (Stake: `{pred['kelly_text']}`)\n\n"
+            f"{camp_line}"
+            f"🏟 **Match:** `{match['home']} vs {match['away']}`\n"
+            f"📅 **Data e Ora:** `{match['data_ora']}`\n\n"
+            f"📌 **Mercato:** `{pred['categoria']}`\n"
+            f"💡 **Giocata Consigliata:** `{pred['pick']}`\n\n"
+            f"📊 **Probabilità Reale (Poisson):** `{pred['probabilita']}%`\n"
+            f"⚖️ **Quota Fair (Senza Aggio):** `{pred['quota_fair']}`\n\n"
+            f"📋 **Analisi Statistica Dettagliata:**\n{pred['analysis']}\n\n"
+            f"✍️ **Scrivi ora in chat la quota del tuo Bookmaker per calcolare lo Stake Kelly personalizzato!**"
+        )
+        keyboard = [
+            [InlineKeyboardButton("🔄 Scegli un altro Rischio", callback_data="match_idx_0")],
+            [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
         ]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -549,9 +547,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_bet(
             user_id=query.from_user.id,
             partita=pending_bet["partita"],
-            pronostico=pending_bet["pick"],
-            quota=pending_bet["quota_bet365"],
-            probabilita=pending_bet["probabilita"] / 100.0,
+            pronostico=pending_bet["pronostico"],
+            quota=pending_bet["quota"],
+            probabilita=pending_bet["probabilita"],
             value_rate=pending_bet["value_rate"],
             stake_euro=pending_bet["stake_euro"]
         )
@@ -560,21 +558,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = (
             f"✅ **SCOMMESSA REGISTRATA CON SUCCESSO!**\n\n"
             f"🏟 **Partita:** `{pending_bet['partita']}`\n"
-            f"🎯 **Pick:** `{pending_bet['pick']}` @`{pending_bet['quota_bet365']}`\n"
+            f"🎯 **Pick:** `{pending_bet['pronostico']}`\n"
             f"💰 **Puntata:** `{pending_bet['stake_euro']:.2f}€`\n\n"
-            f"💾 _Giocata salvata nello storico cassa._"
+            f"💾 _Giocata salvata nello storico. Potrai aggiornarne l'esito a fine partita dalla sezione 'Le mie Bet Salvate'._"
         )
         keyboard = [
-            [InlineKeyboardButton("🔍 Nuova Scansione", callback_data="select_date")],
+            [InlineKeyboardButton("🚩 Nuova Analisi", callback_data="select_date")],
             [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
         ]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif query.data == "cancel_play_bet":
         context.user_data["pending_bet_to_save"] = None
-        msg = "❌ **Scommessa NON salvata.**"
+        msg = "❌ **Scommessa NON salvata.** Non è stata aggiunta allo storico né alle statistiche della cassa."
         keyboard = [
-            [InlineKeyboardButton("🔍 Nuova Scansione", callback_data="select_date")],
+            [InlineKeyboardButton("🚩 Nuova Analisi", callback_data="select_date")],
             [InlineKeyboardButton("🔙 Torna al Menu", callback_data="main_menu")]
         ]
         await safe_edit_message(query, msg, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -590,7 +588,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💵 **Capitale Iniziale:** `{cap_init:.2f}€`\n"
             f"📈 **Capitale Attuale:** `{cap_att:.2f}€`\n"
             f"📊 **Profitto/Perdita Netta:** `{profitto_tot:+.2f}€`\n"
-            f"🎯 **ROI Complessivo:** `{roi:+.1f}%`"
+            f"🎯 **ROI Complessivo:** `{roi:+.1f}%`\n\n"
+            f"ℹ️ **Regole Stake automatico:**\n"
+            f"• Giocata Facile ➔ **1/2 Kelly**\n"
+            f"• Giocata Media ➔ **1/4 Kelly**\n"
+            f"• Giocata Difficile ➔ **1/8 Kelly**"
         )
         keyboard = [
             [InlineKeyboardButton("⚙️ Imposta Cassa Iniziale", callback_data="set_cassa")],
@@ -608,7 +610,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyboard = []
         if rows:
-            msg = "📊 **IL TUO STORICO VALUE BETS:**\n\n"
+            msg = "📊 **IL TUO STORICO VALUE BET SALVATE:**\n\n"
             for row in rows:
                 bet_id, partita, pron, quota, stake, esito, profitto = row
                 if esito == "WON":
@@ -698,6 +700,72 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Inserisci un numero valido.")
             return
 
+    if context.user_data.get("awaiting_odds"):
+        try:
+            user_odds = float(text)
+            pred = context.user_data.get("current_pred")
+            prob_dec = pred["probabilita"] / 100.0
+            value_rate = (user_odds * prob_dec) - 1.0
+            value_rate_pct = value_rate * 100.0
+
+            cap_init, cap_att = get_user_bankroll(user_id)
+            b = user_odds - 1.0
+
+            context.user_data["awaiting_odds"] = False
+
+            if value_rate > 0:
+                kelly_divisor = pred["kelly_divisor"]
+                kelly_text = pred["kelly_text"]
+
+                kelly_raw = ((b * prob_dec - (1 - prob_dec)) / b) / kelly_divisor if b > 0 else 0
+                stake_pct_calc = max(0.0, min(kelly_raw * 100, 10.0))
+                calculated_stake = (cap_att * stake_pct_calc) / 100.0
+
+                if calculated_stake < 1.0:
+                    stake_euro = 1.0
+                    stake_pct = (1.0 / cap_att) * 100.0 if cap_att > 0 else 1.0
+                else:
+                    stake_euro = calculated_stake
+                    stake_pct = stake_pct_calc
+
+                ev_status = f"🟢 **VALUE BET CONFERMATA (EV+ `{value_rate_pct:+.2f}%`)**"
+                advice = f"💰 **Stake Consigliato ({kelly_text}):** `{stake_pct:.1f}% cassa` (`{stake_euro:.2f}€`)"
+                context.user_data["pending_bet_to_save"] = {
+                    "partita": pred["partita"],
+                    "pronostico": pred["pick"],
+                    "quota": user_odds,
+                    "probabilita": prob_dec,
+                    "value_rate": value_rate,
+                    "stake_euro": stake_euro
+                }
+
+                keyboard = [
+                    [InlineKeyboardButton("✅ GIOCATA (Salva in Cassa)", callback_data="confirm_play_bet")],
+                    [InlineKeyboardButton("❌ NON GIOCATA (Annulla)", callback_data="cancel_play_bet")]
+                ]
+                ask_msg = "\n\n❓ **Hai intenzione di piazzare questa giocata?**"
+            else:
+                ev_status = f"🔴 **NO VALUE (EV `{value_rate_pct:+.2f}%`)**"
+                advice = "⚠️ La quota offerta è svantaggiosa rispetto al modello di Poisson. Nessuno stake consigliato."
+                ask_msg = ""
+                keyboard = [
+                    [InlineKeyboardButton("🚩 Nuova Analisi", callback_data="select_date")],
+                    [InlineKeyboardButton("🔙 Menu", callback_data="main_menu")]
+                ]
+
+            response = (
+                f"🧮 **RISULTATO ANALISI POISSON & VALUE**\n\n"
+                f"🏟 **Partita:** `{pred['partita']}`\n"
+                f"🎯 **Scommessa:** `{pred['pick']}`\n"
+                f"📊 **Probabilità Matematica:** `{pred['probabilita']}%` | **Quota Fair:** `{pred['quota_fair']}`\n"
+                f"💵 **Quota Tuo Bookmaker:** `{user_odds:.2f}`\n\n"
+                f"{ev_status}\n\n"
+                f"💡 {advice}{ask_msg}"
+            )
+            await update.message.reply_text(response, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        except ValueError:
+            await update.message.reply_text("❌ Inserisci una quota valida (es. `1.85`).")
+
 async def post_init(application: Application):
     await application.bot.set_my_commands([BotCommand("start", "Apri Menu Principale")])
 
@@ -707,7 +775,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🤖 Bot Telegram avviato con analisi completa e scansione Bet365...")
+    print("🤖 Bot Telegram avviato correttamente senza match di fallback (solo dati reali)...")
     app.run_polling()
 
 if __name__ == "__main__":
